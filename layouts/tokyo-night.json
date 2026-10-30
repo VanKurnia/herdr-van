@@ -139,7 +139,7 @@
   ],
   "background": { "image": "backgrounds/tokyo-grid.png", "fit": "cover" },
   "theme": "tokyo-night",
-  "font": "JetBrains Mono",
+  "font": "JetBrainsMono NFM",
   "font_size": 13,
   "ui_font": "JetBrainsMono NFM",
   "terminal_opacity": 0,
