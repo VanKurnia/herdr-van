@@ -15,6 +15,23 @@ Copy `layouts/`, `mods/`, `themes/`, `backgrounds/`, `custom-icons/` and
 the `herdr-van` layout. Needs `JetBrainsMono NFM` for the UI font. See
 [RECIPE.md](RECIPE.md) for the full build brief.
 
+## Herdr TUI prefix
+
+The `herdr-tui-prefix` mod brings the [Herdr TUI](https://herdr.dev/tui)'s own
+default prefix and bindings into the app: `ctrl+b`, then a key. It needs three
+`keys.json` entries:
+
+```json
+{
+  "global": { "ctrl-b": "mod.open:herdr-tui-prefix" },
+  "terminal": { "ctrl-b": "mod.open:herdr-tui-prefix" },
+  "mod:herdr-tui-prefix": { "ctrl-b": "herdr-tui-prefix.send-prefix" }
+}
+```
+
+Ctrl+B shows a nine-row card; `?` swaps it for the full table of herdr-tui's
+defaults and back. See [mods/herdr-tui-prefix/RECIPE.md](mods/herdr-tui-prefix/RECIPE.md).
+
 ## Editing this layout
 
 The Herdr home is the source of truth: edit the files there, then commit here.
