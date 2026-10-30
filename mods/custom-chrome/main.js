@@ -1,6 +1,6 @@
 import { View, div, image, svg } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
-import { theme, run, props, window, shared, setShared, updates, layout } from "herdr";
+import { theme, run, props, window, shared, setShared, updates, layout, exec, readTextFile, watchFolder, appHome } from "herdr";
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -10,6 +10,11 @@ function find(node, id) {
   }
   return null;
 }
+
+// ── Brand config ─────────────────────────────────────────────
+// The name lives in brand.json next to this file ({"name": "..."}).
+// Empty = this computer's username (else "Herdr"); any string pins it.
+// Hovering the brand always reveals "Herdr". Edits apply live.
 
 // The sidebar's rail goes by its width, not a flag: dragging its edge narrows it too.
 const narrow = () => (find(layout(), "sidebar")?.size?.px ?? Infinity) < 160;
@@ -24,6 +29,34 @@ function toggleSidebar() {
 }
 
 export default class WorkspaceChrome extends View {
+  init(_props, cx) {
+    this.brandUser = null; // null = resolving (shows fallback), or unresolvable
+    this.brandFixed = "";
+    cx.spawn(async (cx) => {
+      try {
+        const r = await exec("whoami");
+        const raw = (r.stdout || "").trim().split(/[\\/]/).pop();
+        if (raw) this.brandUser = raw;
+      } catch { /* keep fallback */ }
+      cx.notify();
+    });
+    const dir = `${appHome()}/mods/custom-chrome`;
+    const load = async () => {
+      try {
+        const text = await readTextFile(`${dir}/brand.json`);
+        const cfg = text ? JSON.parse(text) : null;
+        this.brandFixed = typeof cfg?.name === "string" ? cfg.name : "";
+      } catch { this.brandFixed = ""; }
+      cx.notify();
+    };
+    cx.spawn(async (_cx) => {
+      await load();
+      try { for (;;) { await watchFolder(dir); await load(); } } catch { /* watcher ends with the copy */ }
+    });
+  }
+  brandName() {
+    return this.brandFixed || this.brandUser || "Herdr";
+  }
   button(id, label, action) {
     const t = theme();
     return div().id(id).size(26).flex_none().flex().items_center().justify_center().rounded(6).text_color(t.muted).hover(s => s.bg(t.hover).text_color(t.foreground))
@@ -44,7 +77,7 @@ export default class WorkspaceChrome extends View {
       .when(!collapsed, el => el.child(h_flex().flex_1().gap(8).items_center()
         .on_hover((h, cx) => { this.brandHover = h; cx.notify(); })
         .child(svg(`mods/custom-chrome/terminal.svg`).size(20).text_color(t.accent))
-        .child(div().font_semibold().text_color(t.foreground).child(this.brandHover ? "Herdr" : "Lucavien"))))
+        .child(div().font_semibold().text_color(t.foreground).child(this.brandHover ? "Herdr" : this.brandName()))))
       .when(!collapsed, el => el.child(this.button("search", svg("mods/custom-chrome/search.svg").size(15), () => run("mod.open", { name: "picker" }))))
       // On the macOS rail the traffic lights fill the row; the agents list's » unfolds it.
       .when(!(collapsed && window()?.platform === "macos"), el => el.child(this.button("sidebar-toggle", svg("mods/custom-chrome/sidebar.svg").size(15), toggleSidebar)));

@@ -1,0 +1,4 @@
+{
+  "_": "Brand name for the sidebar header. Empty = this computer's username (else Herdr). Any string pins the brand.",
+  "name": ""
+}

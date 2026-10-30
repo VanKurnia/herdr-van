@@ -64,6 +64,9 @@ paper grid, which dissolves into solid indigo toward the bottom edge.
   `terminal.svg` (from `lucide-static`) in accent blue instead of the Herdr
   PNG, `Lucavien`/`Herdr` hover swap via `on_hover`, footer reduced to one
   28px settings icon (no label, no Add machine row), footer block 40px.
+  The brand name is a live JSON config: `mods/custom-chrome/brand.json`
+  (`{"name": ""}` = this computer's username, else `Herdr`; any string
+  pins it; edits apply without restart via a `watchFolder` loop).
 - `backgrounds/tokyo-grid.png` (2560×1440, pre-composed): vertical gradient
   `#000000` → `#1a1b26`, the WezTerm `grid-tile.png` lattice tiled at 40px,
   and the top-third-transparent fade baked in — Herdr accepts a single
@@ -87,8 +90,8 @@ paper grid, which dissolves into solid indigo toward the bottom edge.
   transparent→canvas fade) and it hot-reloads.
 - `terminal_opacity: 0` means terminal text sits directly on the image; on a
   bright grid variant, raise it toward 0.7–0.85 for contrast.
-- The brand says **Lucavien** — change one string in
-  `mods/custom-chrome/main.js` to rename it.
+- The brand says whatever `brand.json` holds (shipped empty → your
+  username) — change one JSON string to rename it, no code edit.
 - `programs.json` here contains only the `pi` icon override; merge (don't
   overwrite) if you already have one — entries apply field by field.
 - Version skew: clones record `cloned_from` 0.1.9. On newer Herdr versions,
