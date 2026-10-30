@@ -66,7 +66,9 @@ paper grid, which dissolves into solid indigo toward the bottom edge.
   28px settings icon (no label, no Add machine row), footer block 40px.
   The brand name is a live JSON config: `herdr-van-config.json` at the
   Herdr home root (`{"brand": {"name": ""}}` = this computer's
-  username, else `Herdr`; any string pins it). Edits apply without restart
+  username, else `Herdr`; any string pins it). It is intentionally NOT
+  symlinked into this repo — your copy is yours, the repo ships only the
+  empty default as a template. Edits apply without restart
   via `watchFolder` loops on both the home and the resolved repo folder,
   so edits from either side reload — important because hot-reload misses
   file saves made through symlinked mod folders (a layout switch away and
