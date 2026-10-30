@@ -84,13 +84,34 @@ paper grid, which dissolves into solid indigo toward the bottom edge.
 - `custom-icons/pi.svg`: the official `pi.dev/logo-auto.svg` (800×800, same
   geometry as Herdr's icon convention), wired via `programs.json`
   (`pi` entry → `custom-icons/pi.svg`, `tint: false` for full-color render).
+- `mods/herdr-tui-prefix/`: not part of the layout — it needs no block, only
+  key bindings, so it works in any layout. The [Herdr TUI](https://herdr.dev/tui)'s
+  own default prefix and defaults: `ctrl+b`, then a key. `mod.json` is
+  `place: "none"` with a top popup overlay (520 wide, offset 64), so nothing
+  is docked. Ctrl+B opens a nine-row card (`SHORT`: new tab, next/previous,
+  select tab, split right/down, focus pane, zoom/close, space picker/sidebar,
+  minimize, all bindings); `?` swaps it for the full table (`SECTIONS`,
+  `INDEX`) of herdr-tui's `herdr --default-config` `[keys]` defaults and back,
+  without closing. Rows with no Herdr-app command stay listed and dimmed with
+  a reason (`r` resize, `[` copy mode, `tab`/`shift+tab` cycling, `e`
+  scrollback, `shift+p` rename pane, `shift+r` reload, `o` notification
+  target); pressing one posts a warning toast. Everything else dispatches
+  `pane.*`, `tab.*`, `space.*`, `layout.toggle`, `window.minimize`,
+  `app.settings`, or the shipped `picker`/`worktree` overlays; `q` minimizes
+  where herdr-tui detaches, and `w`/`g` both open `picker`. A literal Ctrl+B
+  goes out through `hc(["keys", terminal, "ctrl+b"])`. The three keys.json
+  entries are in the README.
 - Install: copy `layouts/`, `mods/`, `themes/`, `backgrounds/`,
   `custom-icons/` and `programs.json` into the Herdr home, then in Herdr run
   `layout.switch` to `herdr-van`. Requires JetBrainsMono NFM installed for
   the UI font (falls back to JetBrains Mono without it). Set shared
-  `workspace.panels` to `[]` to keep the Files/Changes buttons off.
+  `workspace.panels` to `[]` to keep the Files/Changes buttons off. For
+  `herdr-tui-prefix`, also merge its three `keys.json` entries (README) — the
+  mod does nothing without them; they take Ctrl+B from tmux and other panes.
 - No programs are run and no network is touched by any included mod; the only
   build-time fetch was the palette TOML and the Lucide SVG, both vendored in.
+  `herdr-tui-prefix` is the exception at run time: it calls `hc` only when you
+  ask for a literal Ctrl+B.
 
 ## Watch out
 
@@ -108,6 +129,11 @@ paper grid, which dissolves into solid indigo toward the bottom edge.
   re-clone the four mods and re-apply the one-line diffs if behavior drifts.
 - Sizes assume a ~1080p+ window: the 2560×1440 PNG is `cover`-fit, so it
   holds up on HiDPI; the grid pitch stays 40px at any size by construction.
+- `herdr-tui-prefix` costs every pane program its Ctrl+B: Ctrl+B Ctrl+B is
+  what reaches tmux or a shell again. Bind the mod to another key in
+  `keys.json` if that is too much, and remember `?` is the mod's own toggle,
+  not `app.help`. The prefix is Ctrl+B in herdr-tui's defaults too, so this
+  recipe follows it rather than choosing.
 
 ## Done when
 
@@ -119,3 +145,6 @@ paper grid, which dissolves into solid indigo toward the bottom edge.
   no bottom status bar
 - [ ] A running Pi agent shows the three-color logo in the sidebar and tab
 - [ ] Hovering the brand reads Herdr; hovering the gear highlights only the icon
+- [ ] After adding the mod's three keys: Ctrl+B shows the nine-row card over
+  any layout, `?` swaps it for the full herdr-tui table and back, `v` splits
+  right, and Ctrl+B Ctrl+B types a prefix into the shell
