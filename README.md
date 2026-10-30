@@ -1,16 +1,18 @@
 # herdr-van
 
-Tokyo Night Night for the [Herdr app](https://herdr.dev): full-window indigo
-theme over a WezTerm-style paper-grid backdrop, transparent sidebar and
-terminal, custom tab bar, Pi logo program icon.
+The `herdr-van` layout for the [Herdr app](https://herdr.dev): Tokyo Night
+over a WezTerm-style paper-grid backdrop, transparent sidebar and terminal,
+custom tab bar, Pi logo program icon. The layout names the `tokyo-night`
+theme, which ships in `themes/`, so the two names differ on purpose:
+`herdr-van` is the layout, `tokyo-night` is its theme.
 
-![herdr-van](previews/2026-10-30.png)
+![herdr-van](preview.png)
 
 ## Install
 
 Copy `layouts/`, `mods/`, `themes/`, `backgrounds/`, `custom-icons/` and
 `programs.json` into your Herdr home (`~/.config/herdr-app`), then switch to
-the `tokyo-night` layout. Needs `JetBrainsMono NFM` for the UI font. See
+the `herdr-van` layout. Needs `JetBrainsMono NFM` for the UI font. See
 [RECIPE.md](RECIPE.md) for the full build brief.
 
 ## Editing this layout

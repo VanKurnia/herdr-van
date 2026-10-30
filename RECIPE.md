@@ -1,11 +1,12 @@
-# Tokyo Night for Herdr
+# herdr-van
 
-A full-window Tokyo Night Night theme for the Herdr app: terminal, sidebar,
-tab bar and panels all in `#1a1b26` indigo with `#7aa2f7` blue accents, over a
-WezTerm-style paper-grid backdrop that shows through the terminal and the
-sidebar alike.
+A full-window Tokyo Night Night layout for the Herdr app, named `herdr-van`
+(its theme file is `tokyo-night`, so the two names differ on purpose):
+terminal, sidebar, tab bar and panels all in `#1a1b26` indigo with `#7aa2f7`
+blue accents, over a WezTerm-style paper-grid backdrop that shows through the
+terminal and the sidebar alike.
 
-![Tokyo Night for Herdr](preview.png)
+![herdr-van](preview.png)
 
 ## What you see
 
@@ -39,8 +40,11 @@ paper grid, which dissolves into solid indigo toward the bottom edge.
 
 ## Built from
 
-- Layout file `layouts/tokyo-night.json`: a clone of shipped `main`. Root
-  look only: `"theme": "tokyo-night"`, `"font": "JetBrains Mono"`,
+- Layout file `layouts/herdr-van.json`: a clone of shipped `main`. Herdr takes
+  the layout's name from this file name, so it has to be `herdr-van.json` for
+  `layout.switch` and `herdr-app status` to say `herdr-van`; per-layout clicks
+  live in `layouts/.state/herdr-van.json`, keyed by the same name. Root look
+  only: `"theme": "tokyo-night"`, `"font": "JetBrains Mono"`,
   `"font_size": 13`, `"ui_font": "JetBrainsMono NFM"`,
   `"terminal_opacity": 0`, `"terminal_padding": [5, 2]`,
   `"background": { "image": "backgrounds/tokyo-grid.png", "fit": "cover" }`.
@@ -82,7 +86,7 @@ paper grid, which dissolves into solid indigo toward the bottom edge.
   (`pi` entry → `custom-icons/pi.svg`, `tint: false` for full-color render).
 - Install: copy `layouts/`, `mods/`, `themes/`, `backgrounds/`,
   `custom-icons/` and `programs.json` into the Herdr home, then in Herdr run
-  `layout.switch` to `tokyo-night`. Requires JetBrainsMono NFM installed for
+  `layout.switch` to `herdr-van`. Requires JetBrainsMono NFM installed for
   the UI font (falls back to JetBrains Mono without it). Set shared
   `workspace.panels` to `[]` to keep the Files/Changes buttons off.
 - No programs are run and no network is touched by any included mod; the only
@@ -107,7 +111,7 @@ paper grid, which dissolves into solid indigo toward the bottom edge.
 
 ## Done when
 
-- [ ] `layout.switch` to `tokyo-night` shows the indigo window with the grid
+- [ ] `layout.switch` to `herdr-van` shows the indigo window with the grid
   visible inside the terminal and behind the sidebar, `>Lucavien` brand top-left
 - [ ] `herdr-app status` exits 0 with no `*.error` lines (each mod also passes
   `herdr-app check <mod folder>`)
