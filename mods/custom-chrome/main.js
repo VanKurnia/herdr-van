@@ -12,9 +12,10 @@ function find(node, id) {
 }
 
 // ── Brand config ─────────────────────────────────────────────
-// The name lives in brand.json next to this file ({"name": "..."}).
-// Empty = this computer's username (else "Herdr"); any string pins it.
-// Hovering the brand always reveals "Herdr". Edits apply live.
+// The name lives in herdr-van-config.json at the Herdr home root
+// ({"brand": {"name": "..."}}). Empty = this computer's username
+// (else "Herdr"); any string pins it. Hovering the brand always
+// reveals "Herdr". Edits apply live.
 
 // The sidebar's rail goes by its width, not a flag: dragging its edge narrows it too.
 const narrow = () => (find(layout(), "sidebar")?.size?.px ?? Infinity) < 160;
@@ -40,18 +41,37 @@ export default class WorkspaceChrome extends View {
       } catch { /* keep fallback */ }
       cx.notify();
     });
-    const dir = `${appHome()}/mods/custom-chrome`;
+    const home = appHome();
+    const file = `${home}/herdr-van-config.json`;
     const load = async () => {
       try {
-        const text = await readTextFile(`${dir}/brand.json`);
+        const text = await readTextFile(file);
         const cfg = text ? JSON.parse(text) : null;
-        this.brandFixed = typeof cfg?.name === "string" ? cfg.name : "";
+        this.brandFixed = typeof cfg?.brand?.name === "string" ? cfg.brand.name : "";
       } catch { this.brandFixed = ""; }
       cx.notify();
     };
-    cx.spawn(async (_cx) => {
+    // The config may be a symlink into a repo: watch the real folder too,
+    // so edits from either side reload. Both loops filter by filename.
+    const watchLoop = async (dir) => {
       await load();
-      try { for (;;) { await watchFolder(dir); await load(); } } catch { /* watcher ends with the copy */ }
+      try {
+        for (;;) {
+          const changed = await watchFolder(dir);
+          if (changed.some((p) => p.endsWith("herdr-van-config.json"))) await load();
+        }
+      } catch { /* watcher ends with the copy */ }
+    };
+    cx.spawn(async (_cx) => { await watchLoop(home); });
+    cx.spawn(async (cx) => {
+      try {
+        const r = await exec("powershell", ["-NoProfile", "-Command", `(Get-Item ${JSON.stringify(file)}).Target`]);
+        const target = (r.stdout || "").trim();
+        if (target) {
+          const dir = target.split(/[\\/]/).slice(0, -1).join("/");
+          if (dir && dir !== home) await watchLoop(dir);
+        }
+      } catch { /* not a link, or no powershell: home loop covers it */ }
     });
   }
   brandName() {
