@@ -10,5 +10,5 @@ terminal, custom tab bar, Pi logo program icon.
 
 Copy `layouts/`, `mods/`, `themes/`, `backgrounds/`, `custom-icons/` and
 `programs.json` into your Herdr home (`~/.config/herdr-app`), then switch to
-the `tokyo-night` layout. Needs JetBrainsMono NFM for the UI font. See
+the `tokyo-night` layout. Needs `JetBrainsMono NFM` for the UI font. See
 [RECIPE.md](RECIPE.md) for the full build brief.
