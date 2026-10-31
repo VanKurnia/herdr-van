@@ -6,7 +6,7 @@
 import { div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { spaces, machines, panes, run, openOverlay, exec, hc, theme, shared, setShared, watchFolder, window } from "herdr";
-import { narrow } from "./lib.js";
+import { claimSidebarHover, narrow, onSidebar } from "./lib.js";
 
 // Where a space is now: its first terminal's live folder, else where it was made.
 // `ps`: panes(), read once by the caller (each read copies every pane).
@@ -332,10 +332,13 @@ export default class Spaces {
       changed = true;
     }
     if (changed) setShared("space.colors", kept);
-    return v_flex().size_full().min_h(0).text_size(13)
+    // The pointer on the sidebar brings the + out.
+    const add = div().id("space-new").p(4).rounded(5).hover(s => s.bg(t.hover).text_color(t.foreground)).on_click(() => run("space.new")).child("+");
+    return v_flex().id("sidebar-spaces").size_full().min_h(0).text_size(13)
+      .on_hover(claimSidebarHover("spaces"))
       .child(h_flex().h(31).pl(16).pr(10).items_center().justify_between().text_size(11.5).text_color(t.dim)
         .when(!collapsed, el => el.child("Spaces"))
-        .child(div().id("space-new").p(4).rounded(5).hover(s => s.bg(t.hover).text_color(t.foreground)).on_click(() => run("space.new")).child("+")))
+        .when(onSidebar(), el => el.child(add)))
       .child(v_flex().flex_1().min_h(0).px(8).pb(14).overflow_y_scrollbar().mode("always")
         .on_mouse_up("left", (_e, cx) => { this.pressed = null; cx.notify(); })
         .children(this.grouped(t, collapsed)));

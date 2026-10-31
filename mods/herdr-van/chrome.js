@@ -1,7 +1,7 @@
 import { div, svg } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { theme, run, props, window, updates, exec, readTextFile, watchFolder, appHome, shared, setShared } from "herdr";
-import { narrow, toggleSidebar } from "./lib.js";
+import { claimSidebarHover, narrow, onSidebar, toggleSidebar } from "./lib.js";
 
 // ── Brand config ─────────────────────────────────────────────
 // The name lives in herdr-van-config.json at the Herdr home root
@@ -79,7 +79,8 @@ export default class Chrome {
       // The prefix mod publishes its waiting state; the badge is that state and
       // nothing else, so an idle footer says nothing about the prefix.
       const armed = Boolean(shared("prefix.armed"));
-      return v_flex().size_full().border_t(1).border_color(t.border).px(8).pt(4).pb(8)
+      return v_flex().id("sidebar-footer").size_full().border_t(1).border_color(t.border).px(8).pt(4).pb(8)
+        .on_hover(claimSidebarHover("footer"))
         .child(h_flex().items_center().justify_between()
           .child(h_flex().id("settings").size(28).flex_none().flex().items_center().justify_center().gap(4).rounded(8)
             // On the rail the gear is the only room for the accent.
@@ -93,14 +94,17 @@ export default class Chrome {
             .child(svg(`mods/herdr-van/icons/option.svg`).size(11).flex_none())
             .child("Prefix"))));
     }
-    return h_flex().size_full().pl(collapsed ? 6 : 14).pr(10).gap(4).items_center().text_size(13.5)
+    // The brand's buttons are drawn only while the pointer is on the sidebar.
+    const side = onSidebar();
+    return h_flex().id("sidebar-brand").size_full().pl(collapsed ? 6 : 14).pr(10).gap(4).items_center().text_size(13.5)
+      .on_hover(claimSidebarHover("brand"))
       .when(window()?.platform === "macos" && !collapsed, el => el.pl(76))
       .when(!collapsed, el => el.child(h_flex().flex_1().gap(8).items_center()
         .on_hover((h, cx) => { this.brandHover = h; cx.notify(); })
         .child(svg(`mods/herdr-van/icons/terminal.svg`).size(20).text_color(t.accent))
         .child(div().font_semibold().text_color(t.foreground).child(this.brandHover ? "Herdr" : this.brandName()))))
-      .when(!collapsed, el => el.child(this.button("search", svg("mods/herdr-van/icons/search.svg").size(15), () => run("mod.open", { name: "picker" }))))
+      .when(side && !collapsed, el => el.child(this.button("search", svg("mods/herdr-van/icons/search.svg").size(15), () => run("mod.open", { name: "picker" }))))
       // On the macOS rail the traffic lights fill the row; the agents list's » unfolds it.
-      .when(!(collapsed && window()?.platform === "macos"), el => el.child(this.button("sidebar-toggle", svg("mods/herdr-van/icons/sidebar.svg").size(15), toggleSidebar)));
+      .when(side && !(collapsed && window()?.platform === "macos"), el => el.child(this.button("sidebar-toggle", svg("mods/herdr-van/icons/sidebar.svg").size(15), toggleSidebar)));
   }
 }

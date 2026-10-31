@@ -4,7 +4,7 @@
 import { div, image, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { agents, terminals, panes, focused, spaces, run, theme, shared, setShared, setAgentOrder, openOverlay, closeOverlay, props } from "herdr";
-import { narrow, toggleSidebar } from "./lib.js";
+import { claimSidebarHover, narrow, toggleSidebar } from "./lib.js";
 
 const clean = (s) => (s ?? "").replace(/^[^\p{L}\p{N}]+/u, "").trim();
 
@@ -424,11 +424,13 @@ export default class Agents {
       : groups.flatMap((g) => [header(g), ...(this.folded.has(g.id) ? [] : g.members.flatMap(withKids))]);
 
     return v_flex()
+      .id("sidebar-agents")
       .size_full()
       .min_h(0)
       .border_t(1)
       .border_color(t.border)
       .text_size(13)
+      .on_hover(claimSidebarHover("agents"))
       .when(!collapsed, (el) =>
         el.child(
           h_flex()
