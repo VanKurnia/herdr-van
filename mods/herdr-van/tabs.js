@@ -5,7 +5,7 @@
 import { div, svg, image } from "gpui-kit";
 import { h_flex } from "gpui-base";
 import { spaces, panes, run, openOverlay, theme, window, layout, settings } from "herdr";
-import { find } from "./lib.js";
+import { sidebar } from "./lib.js";
 
 export default class Tabs {
   init() {
@@ -16,11 +16,11 @@ export default class Tabs {
     const t = theme();
     const space = spaces().find(p => p.active);
     const shown = space?.tabs ?? [];
-    const stop = (_e, cx) => cx.stop_propagation();
+    const ps = panes();
     const button = (id, label, action) => div().id(id).size(26).flex_none().flex().items_center().justify_center().rounded(6).text_color(t.dim).hover(s => s.bg(t.hover).text_color(t.foreground))
-      .on_mouse_down("left", stop).on_click(action).child(label);
+      .on_mouse_down("left", (_e, cx) => cx.stop_propagation()).on_click(action).child(label);
     const item = (c, i) => {
-      const program = panes().find(p => p.tab === c.id && p.program?.agent)?.program ?? panes().find(p => p.tab === c.id)?.program;
+      const program = ps.find(p => p.tab === c.id && p.program?.agent)?.program ?? ps.find(p => p.tab === c.id)?.program;
       const name = /^tb\d+$/.test(c.name) ? program?.name ?? "Terminal" : c.name;
       return h_flex().id(`tab-${c.id}`).h(29).px(10).gap(7).rounded(7).items_center().flex_none().text_size(12.8)
         .border(1).border_color(c.active ? t.border : t.chrome).bg(c.active ? t.raised : t.chrome).text_color(c.active ? t.foreground : t.muted)
@@ -37,10 +37,10 @@ export default class Tabs {
         .when(c.status === "working", el => el.child(svg("mods/herdr-van/icons/spinner.svg").size(12).flex_none().text_color(t.working).spin(900)))
         .when(c.status === "blocked" || c.status === "done", el => el.child(div().size(6).rounded(3).bg(t[c.status])));
     };
-    const root = layout(), sidebar = find(root, "sidebar"), w = window();
+    const w = window(), bar = sidebar(), lights = layout()?.traffic_lights;
     // Old saved rails and a dragged-narrow sidebar can be smaller than the window buttons.
-    const lightsPadding = w?.platform === "macos" && w.titlebar === "none" && !w.fullscreen && root?.traffic_lights
-      ? Math.max(10, (root.traffic_lights[0] + 64) / settings().zoom - (sidebar?.hidden ? 0 : sidebar?.size?.px ?? 0))
+    const lightsPadding = w?.platform === "macos" && w.titlebar === "none" && !w.fullscreen && lights
+      ? Math.max(10, (lights[0] + 64) / settings().zoom - (bar?.hidden ? 0 : bar?.size?.px ?? 0))
       : 10;
     // Windows draws its own style of X; everywhere else the flat one.
     const closeIcon = w?.platform === "windows"

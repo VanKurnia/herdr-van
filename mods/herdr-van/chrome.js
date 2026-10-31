@@ -1,7 +1,7 @@
 import { div, svg } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
-import { theme, run, props, window, updates, exec, readTextFile, watchFolder, appHome } from "herdr";
-import { find, narrow, toggleSidebar } from "./lib.js";
+import { theme, run, props, window, updates, exec, readTextFile, watchFolder, appHome, shared, setShared } from "herdr";
+import { narrow, toggleSidebar } from "./lib.js";
 
 // ── Brand config ─────────────────────────────────────────────
 // The name lives in herdr-van-config.json at the Herdr home root
@@ -11,6 +11,9 @@ import { find, narrow, toggleSidebar } from "./lib.js";
 
 export default class Chrome {
   init(_props, cx) {
+    // Nothing can be waiting for a prefix key at start: a crash mid-prefix
+    // leaves the flag set, and the badge would stay lit forever.
+    if (props()?.part === "footer" && shared("prefix.armed")) setShared("prefix.armed", false);
     this.brandUser = null; // null = resolving (shows fallback), or unresolvable
     this.brandFixed = "";
     cx.spawn(async (cx) => {
@@ -73,11 +76,22 @@ export default class Chrome {
     const t = theme();
     const collapsed = narrow();
     if (props()?.part === "footer") {
+      // The prefix mod publishes its waiting state; the badge is that state and
+      // nothing else, so an idle footer says nothing about the prefix.
+      const armed = Boolean(shared("prefix.armed"));
       return v_flex().size_full().border_t(1).border_color(t.border).px(8).pt(4).pb(8)
-        .child(h_flex().id("settings").size(28).flex_none().flex().items_center().justify_center().gap(4).rounded(8)
-          .text_color(t.muted).hover(s => s.bg(t.hover).text_color(t.foreground)).cursor_pointer()
-          .on_click(() => run("app.settings")).child(svg(`mods/herdr-van/icons/settings.svg`).size(14))
-          .when(Boolean(updates().app.ready), el => el.child(div().size(6).rounded_full().bg(t.accent))));
+        .child(h_flex().items_center().justify_between()
+          .child(h_flex().id("settings").size(28).flex_none().flex().items_center().justify_center().gap(4).rounded(8)
+            // On the rail the gear is the only room for the accent.
+            .text_color(armed && collapsed ? t.accent : t.muted)
+            .hover(s => s.bg(t.hover).text_color(t.foreground)).cursor_pointer()
+            .on_click(() => run("app.settings")).child(svg(`mods/herdr-van/icons/settings.svg`).size(14))
+            .when(Boolean(updates().app.ready), el => el.child(div().size(6).rounded_full().bg(t.accent))))
+          .when(armed && !collapsed, el => el.child(div().px(7).h(18).flex_none().flex().items_center().gap(3).rounded(5)
+            .text_size(10.5).font_semibold()
+            .bg(t.accent).text_color(t.accent_foreground)
+            .child(svg(`mods/herdr-van/icons/option.svg`).size(11).flex_none())
+            .child("Prefix"))));
     }
     return h_flex().size_full().pl(collapsed ? 6 : 14).pr(10).gap(4).items_center().text_size(13.5)
       .when(window()?.platform === "macos" && !collapsed, el => el.pl(76))

@@ -1,7 +1,8 @@
 // Herdr TUI prefix: herdr-tui's default prefix (Ctrl+B) over a trimmed subset
-// of its default bindings. Press Ctrl+B, release, press a key: the hint waits
-// for that one key and closes as soon as it has it, with no repeat window
-// holding the keyboard (herdr-tui has none either).
+// of its default bindings. The prefix shows no card of its own: the sidebar
+// footer's badge turns accent while the next key is expected, and `?` opens the
+// guide. Ctrl+B then a key, no repeat window holding the keyboard (herdr-tui has
+// none either).
 //
 // Deliberately left out: every shift+key row (shift+t/x/n/w/d/g/p/r/tab). Shift
 // after a prefix is easy to mistype, and the app's own keys cover those actions.
@@ -11,7 +12,15 @@
 
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { closeOverlay, focused, hc, nextCommand, notify, openOverlay, props, run, theme } from "herdr";
+import { closeOverlay, focused, hc, nextCommand, notify, openOverlay, props, run, setShared, theme } from "herdr";
+
+// How long the prefix waits for its key. An armed prefix that never lets go
+// swallows the next keystroke whenever it comes, so it times out and the badge
+// goes quiet; a key after that reaches the terminal as typed.
+const WAIT = 4000;
+
+// The badge the footer shows is this mod's only state: true while a key is expected.
+const ARM = "prefix.armed";
 
 // Every picker row opens the same shipped popup.
 const openPicker = () => openOverlay({ mod: "picker", kind: "popup", at: "top", offset: 40, width: 640, height: 0.8 });
@@ -53,20 +62,6 @@ const SECTIONS = [
   ]],
 ];
 
-// The card Ctrl+B shows first: the keys worth knowing by heart. `?` expands it
-// to the full table above.
-const SHORT = [
-  ["c", "New tab"],
-  ["n · p", "Next / previous tab"],
-  ["1–9", "Select tab"],
-  ["v · -", "Split right / down"],
-  ["h j k l", "Focus pane"],
-  ["z · x", "Zoom / close pane"],
-  ["b", "Toggle sidebar"],
-  ["q", "Minimize window"],
-  ["?", "All bindings"],
-];
-
 const INDEX = new Map();
 for (const [, rows] of SECTIONS) for (const row of rows) INDEX.set(row[0], row);
 
@@ -74,8 +69,11 @@ export default class HerdrTuiPrefix extends View {
   init(_props, cx) {
     this.handle = cx.focus_handle();
     this.handle.focus();
-    this.all = false;
-    // The mod-specific binding beats the global/terminal opener while we're open.
+    // The guide has nothing to wait for.
+    if (props()?.guide) return;
+    setShared(ARM, true);
+    cx.timer.after(WAIT, () => this.cancel());
+    // The mod-specific binding beats the global/terminal opener while we wait.
     cx.spawn(async (cx) => {
       for (;;) {
         await nextCommand();
@@ -84,21 +82,37 @@ export default class HerdrTuiPrefix extends View {
     });
   }
 
-  dismiss() {
+  // Esc, a click beside it, a layout switch or the app quitting closes this copy
+  // without going through cancel().
+  close() {
+    setShared(ARM, false);
+  }
+
+  // Clears the flag here as well: close() only runs on teardown, and the badge
+  // should flip the moment the key is taken.
+  cancel() {
+    setShared(ARM, false);
     closeOverlay(props().overlay);
   }
 
   // A literal Ctrl+B to the focused terminal, through the core. Closing the
-  // popup cancels this view's tasks, so the bytes go out before the dismiss.
+  // copy cancels this view's tasks, so the bytes go out before the dismiss.
   sendPrefix(cx) {
     const terminal = focused()?.terminal;
-    if (!terminal) return this.dismiss();
+    if (!terminal) return this.cancel();
     const pending = hc(["keys", terminal, "ctrl+b"]);
     cx.spawn(async () => {
       const result = await pending;
       if (result.code !== 0) console.log(`herdr-tui-prefix: ${result.stderr}`);
     });
-    this.dismiss();
+    this.cancel();
+  }
+
+  // The guide: the full table over its own popup, replacing the waiting copy —
+  // that one is a 1×1 manifest, so it cannot grow into a card.
+  guide() {
+    this.cancel();
+    openOverlay({ mod: "herdr-tui-prefix", kind: "popup", at: "top", offset: 64, width: 520, height: 560, props: { guide: true } });
   }
 
   key(e, cx) {
@@ -113,16 +127,11 @@ export default class HerdrTuiPrefix extends View {
       else if (e.key_char && e.key_char.codePointAt(0) >= 32) key = e.key_char;
       else if (m.shift && e.key.length === 1) key = e.key.toUpperCase();
     }
-    // `?` swaps the card for the full table and back, without closing.
-    if (plain && key === "?") {
-      this.all = !this.all;
-      cx.notify();
-      return;
-    }
+    if (plain && key === "?") return props()?.guide ? this.cancel() : this.guide();
     const row = plain ? INDEX.get(key) : null;
-    if (!row) return this.dismiss();
+    if (!row) return this.cancel();
     const [shown, label, command, args = {}, note] = row;
-    this.dismiss();
+    this.cancel();
     if (command === null) {
       notify({ title: `Herdr TUI prefix · ${shown}`, body: `${label}: ${note}.`, level: "warning", timeout: 5000 });
       return;
@@ -132,6 +141,10 @@ export default class HerdrTuiPrefix extends View {
   }
 
   render() {
+    // Waiting draws nothing, but it is where the keyboard goes: a key event
+    // travels the focus path, so only the element that tracks the handle sees
+    // keys. Drop `track_focus` here and the prefix arm goes deaf.
+    if (!props()?.guide) return div().id("prefix-wait").w(1).h(1).track_focus(this.handle).on_key_down((e, cx) => this.key(e, cx));
     const t = theme();
     const row = (key, label, active = true) => h_flex().h(20).flex_none().items_center().gap(10)
       .child(div().w(66).flex_none().text_size(11.5).text_color(active ? t.accent : t.dim).child(key))
@@ -140,17 +153,15 @@ export default class HerdrTuiPrefix extends View {
       .on_key_down((e, cx) => this.key(e, cx))
       .w(492).p(14).gap(8).bg(t.popover).text_color(t.foreground).text_size(12)
       .child(h_flex().flex_none().justify_between()
-        .child(div().font_semibold().child(this.all ? "Ctrl+B · all bindings" : "Ctrl+B · waiting for a key"))
-        .child(div().text_color(t.muted).child(this.all ? "? short list · Esc cancel" : "Esc cancel · ^B send prefix")))
-      .when(this.all, (el) => el.child(v_flex().h(440).min_h(0).overflow_y_scrollbar().children(
+        .child(div().font_semibold().child("Ctrl+B · all bindings"))
+        .child(div().text_color(t.muted).child("Esc or ? close · ^B send prefix")))
+      .child(v_flex().h(440).min_h(0).overflow_y_scrollbar().children(
         SECTIONS.flatMap(([section, list]) => [
           h_flex().h(24).flex_none().items_center()
             .child(div().text_size(10).font_semibold().text_color(t.dim).child(section.toUpperCase())),
           ...list.map(([key, label, command, , note]) => row(key, label, command !== null)
             .child(div().flex_none().text_size(11).text_color(t.dim).child(note ?? ""))),
-        ]))))
-      .when(!this.all, (el) => el.child(v_flex().children(SHORT.map(([key, label]) => row(key, label)))))
-      .child(div().flex_none().text_color(t.muted)
-        .child(this.all ? "herdr-tui defaults, herdr --default-config" : "? all bindings"));
+        ])))
+      .child(div().flex_none().text_color(t.muted).child("herdr-tui defaults, herdr --default-config"));
   }
 }

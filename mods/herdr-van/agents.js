@@ -3,8 +3,8 @@
 
 import { div, image, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { agents, terminals, panes, focused, spaces, run, theme, shared, setShared, setAgentOrder, openOverlay, closeOverlay, props, window } from "herdr";
-import { find, narrow, toggleSidebar } from "./lib.js";
+import { agents, terminals, panes, focused, spaces, run, theme, shared, setShared, setAgentOrder, openOverlay, closeOverlay, props } from "herdr";
+import { narrow, toggleSidebar } from "./lib.js";
 
 const clean = (s) => (s ?? "").replace(/^[^\p{L}\p{N}]+/u, "").trim();
 
@@ -50,7 +50,13 @@ function icon(p, size, color) {
 
 export default class Agents {
   init(_props, cx) {
-    if (props()?.sortMenu) return;
+    // Both menus open as their own copy: keys need a focus handle.
+    if (props()?.sortMenu || props()?.agentMenu) {
+      this.menuAt = 0;
+      this.handle = cx.focus_handle();
+      this.handle.focus();
+      return;
+    }
     this.folded = new Set();
     // Each agent's last state and when it changed (ms), kept across restarts.
     this.changed = JSON.parse(localStorage.getItem("changed") ?? "{}");
@@ -108,34 +114,74 @@ export default class Agents {
     return sawDone ? RANK.done : RANK[a.status] ?? 0;
   }
 
-  sortMenu(t) {
-    const on = sortOf().id;
+  // A menu popup: a title, rows, ↑/↓ then Enter, Esc to close. The sort menu and
+  // a row's menu are the same shape; the shipped `menu` mod knows panes, tabs and
+  // spaces only, so the agents list draws its own.
+  popup(t, title, rows, onPick) {
     return v_flex()
       .w_full()
       .p(5)
       .bg(t.popover)
       .text_size(12.8)
-      .child(div().px(8).pt(4).pb(6).text_size(11).text_color(t.dim).child("Sort agents"))
-      .children(SORTS.map((s) => h_flex()
-        .id(`sort-${s.id}`)
-        .h(31)
-        .px(8)
-        .gap(9)
-        .rounded(7)
-        .items_center()
-        .text_color(t.foreground)
-        .hover((el) => el.bg(t.hover))
-        .on_click(() => {
-          setShared("agents.sort", s.id);
-          closeOverlay(props().overlay);
-        })
-        .child(svg(`mods/herdr-van/icons/${s.icon}.svg`).size(14).flex_none().text_color(t.muted))
-        .child(div().flex_1().child(s.label))
-        .when(s.id === on, (el) => el.child(svg("mods/herdr-van/icons/check.svg").size(14).flex_none().text_color(t.foreground)))));
+      .track_focus(this.handle)
+      .on_key_down((e, cx) => {
+        if (e.key === "down") this.menuAt = (this.menuAt + 1) % rows.length;
+        else if (e.key === "up") this.menuAt = (this.menuAt + rows.length - 1) % rows.length;
+        else if (e.key === "enter") return onPick(this.menuAt);
+        else if (e.key === "escape") return closeOverlay(props().overlay);
+        else return;
+        cx.notify();
+      })
+      .child(div().px(8).pt(4).pb(6).text_size(11).text_color(t.dim).truncate().child(title))
+      .children(rows.map((r, i) => v_flex()
+        .when(r.rule, (el) => el.child(div().mx(7).my(4).h(1).bg(t.border)))
+        .child(h_flex()
+          .id(`mrow-${i}`)
+          .h(31)
+          .px(8)
+          .gap(9)
+          .rounded(7)
+          .items_center()
+          .text_color(t.foreground)
+          .when(i === this.menuAt, (el) => el.bg(t.selected))
+          .hover((s) => s.bg(t.hover))
+          .on_click(() => onPick(i))
+          .child(svg(`mods/herdr-van/icons/${r.icon}.svg`).size(14).flex_none().text_color(t.muted))
+          .child(div().flex_1().child(r.label))
+          .when(r.checked, (el) => el.child(svg("mods/herdr-van/icons/check.svg").size(14).flex_none().text_color(t.foreground))))));
   }
 
-  peek(addr) {
-    run("terminal.peek", { terminal: addr });
+  sortMenu(t) {
+    const rows = SORTS.map((s) => ({ label: s.label, icon: s.icon, checked: s.id === sortOf().id }));
+    return this.popup(t, "Sort agents", rows, (i) => {
+      setShared("agents.sort", SORTS[i].id);
+      closeOverlay(props().overlay);
+    });
+  }
+
+  // Right-click on an agent or sub-agent row: the same popup either way.
+  menu(address) {
+    openOverlay({ mod: "herdr-van", kind: "popup", width: 220, props: { agentMenu: true, address } });
+  }
+
+  // One row's options, shaped like the tab bar's menu.
+  agentMenu(t) {
+    const addr = props()?.address;
+    const a = agents().find((k) => k.address === addr);
+    const term = terminals().find((k) => k.address === addr);
+    const title = a?.title || a?.tab_name || term?.name || term?.template || addr || "Agent";
+    const rows = [];
+    if (a) rows.push({ label: "Focus", icon: "terminal", command: "pane.focus", args: { pane: a.pane } });
+    rows.push({ label: "Peek", icon: "monitor", command: "terminal.peek", args: { terminal: addr } });
+    if (a) rows.push({ label: "Rename tab…", icon: "square-pen", command: "tab.rename", args: { id: a.tab } });
+    if (a) rows.push({ label: "Rename space…", icon: "square-pen", command: "space.rename", args: { id: a.space } });
+    rows.push(a
+      ? { label: "Close pane", icon: "x", rule: true, command: "pane.close", args: { pane: a.pane } }
+      : { label: "Kill terminal", icon: "x", rule: true, command: "terminal.kill", args: { terminal: addr } });
+    return this.popup(t, title, rows, (i) => {
+      closeOverlay(props().overlay);
+      run(rows[i].command, rows[i].args);
+    });
   }
 
   // Live sub-agents of `addr`, depth first, each with the tree lines in front of it.
@@ -167,7 +213,8 @@ export default class Agents {
       .text_size(12.5)
       .when(on, (el) => el.bg(t.raised))
       .hover((s) => s.bg(t.hover))
-      .on_click(() => this.peek(k.address))
+      .on_click(() => run("terminal.peek", { terminal: k.address }))
+      .on_mouse_down("right", (_e, cx) => { cx.stop_propagation(); this.menu(k.address); })
       .children(s.lines.map(l => div().self_start().mt(-4).w(9).h(17).mr(4).flex_none()
         .when(Boolean(l), el => el.border_l(1.5).border_color(t.input))
         .when(l === "└" || l === "├", el => el.border_b(1.5).rounded_bl(6))))
@@ -177,7 +224,7 @@ export default class Agents {
   }
 
   // compact: a ! for blocked where a header already says "Needs you".
-  status(t, a, compact = false) {
+  status(t, a, compact) {
     const color = t[a.status] ?? t.dim;
     if (a.status === "working") return svg("mods/herdr-van/icons/spinner.svg").size(12).mx(1).flex_none().text_color(t.working).spin(900);
     if (a.status === "blocked" && compact) return div().size(14).flex_none().rounded(4).bg(t.blocked + "26").text_size(10.5).font_bold().text_color(t.blocked).flex().items_center().justify_center().child("!");
@@ -190,6 +237,7 @@ export default class Agents {
   render(cx) {
     const t = theme();
     if (props()?.sortMenu) return this.sortMenu(t);
+    if (props()?.agentMenu) return this.agentMenu(t);
     const collapsed = narrow();
     const sort = sortOf();
     let list = agents();
@@ -272,6 +320,7 @@ export default class Agents {
           .gap(4)
           .hover((s) => s.bg(t.hover))
           .on_click(() => run("pane.focus", { pane: a.pane }))
+          .on_mouse_down("right", (_e, cx) => { cx.stop_propagation(); this.menu(a.address); })
           .child(div().flex_1().min_w(0).whitespace_nowrap().text_right().text_color(t.muted).child(String(i + 1)))
           .child(h_flex().w(14).flex_none().items_center().justify_center().child(this.status(t, a, true)));
       }
@@ -316,6 +365,7 @@ export default class Agents {
           cx.notify();
         })
         .on_click(() => run("pane.focus", { pane: a.pane }))
+        .on_mouse_down("right", (_e, cx) => { cx.stop_propagation(); this.menu(a.address); })
         .when(Boolean(pic), el => el.child(div().id(`agent-fold-${a.address}`)
           .when(subs.length > 0, el => el.on_click((_e, cx) => {
             cx.stop_propagation();

@@ -21,7 +21,8 @@ backdrop — no boxes, no bottom bar, no clutter.
 - **The Pi logo.** Pi agents wear their real three-color logo instead of the
   plain glyph.
 - **Ctrl+B, like the TUI.** A small mod brings the [Herdr TUI](https://herdr.dev/tui)'s
-  prefix into the app: Ctrl+B, then a key. `?` lists everything it keeps.
+  prefix into the app: Ctrl+B, then a key. Nothing opens over the terminal — a
+  `⌥ Prefix` badge appears in the footer while it waits. `?` opens the guide.
 
 ## Add it
 
@@ -65,7 +66,8 @@ your `keys.json`:
 
 Heads up: this takes Ctrl+B away from terminal programs, tmux included — same as
 the TUI. Ctrl+B Ctrl+B still sends a literal prefix. Don't want that? Drop the
-mod and those three lines; the layout works fine without it.
+mod and those three lines; the layout works fine without it, and the footer's
+badge never appears without the mod that sets it.
 
 ## Make it yours
 

@@ -6,7 +6,7 @@
 import { div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { spaces, machines, panes, run, openOverlay, exec, hc, theme, shared, setShared, watchFolder, window } from "herdr";
-import { find, narrow } from "./lib.js";
+import { narrow } from "./lib.js";
 
 // Where a space is now: its first terminal's live folder, else where it was made.
 // `ps`: panes(), read once by the caller (each read copies every pane).
@@ -14,7 +14,6 @@ function place(s, ps) {
   const tabs = new Set((s.tabs ?? []).map((c) => c.id));
   return ps.find((p) => tabs.has(p.tab) && p.cwd)?.cwd || s.folder;
 }
-const rowHeight = ({ tree }) => (tree ? 28 : 30);
 const where = (s, ps) => JSON.stringify([s.machine ?? null, place(s, ps)]);
 const base = (path) => path.replace(/\/+$/, "").split("/").pop();
 // Changes made outside Herdr (an editor's save, a commit in another app): looked
@@ -24,15 +23,6 @@ const FALLBACK = 60000;
 // What a stored color name looks like on an avatar (the same in every mod
 // that draws space avatars): one strong color per hue, light and dark alike.
 const MARK = { ansi6: "#22a99a", ansi3: "#e3814f", ansi4: "#5b8def", ansi5: "#8b7cf6", ansi2: "#3fae6a", ansi1: "#d9649a" };
-
-// A space speaks up only when something in it needs you.
-export function glyph(status) {
-  return status === "blocked" || status === "done" ? "●" : "·";
-}
-
-export function tone(t, status) {
-  return t[status] ?? t.unknown;
-}
 
 export default class Spaces {
   init(_props, cx) {
@@ -282,7 +272,7 @@ export default class Spaces {
       .relative()
       .id(`space-${w.id}`)
       .px(8)
-      .h(rowHeight({ tree }))
+      .h(tree ? 28 : 30)
       .flex_none()
       .justify_center()
       .rounded(8)
@@ -323,7 +313,8 @@ export default class Spaces {
       .hover((s) => s.bg(t.hover))
       .on_click(() => run("space.select", { id: w.id }))
       .child(div().text_color(w.active ? t.foreground : t.muted).child(String(i + 1)))
-      .child(div().text_color(tone(t, w.status)).child(glyph(w.status)));
+      // A space speaks up only when something in it needs you.
+      .child(div().text_color(t[w.status] ?? t.unknown).child(w.status === "blocked" || w.status === "done" ? "●" : "·"));
   }
 
   render() {

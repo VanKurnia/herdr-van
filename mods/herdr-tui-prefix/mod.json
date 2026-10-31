@@ -4,8 +4,9 @@
   "overlay": {
     "kind": "popup",
     "at": "top",
-    "offset": 64,
-    "width": 520,
-    "height": 560
+    "offset": 0,
+    "width": 1,
+    "height": 1,
+    "frame": "none"
   }
 }

@@ -22,7 +22,8 @@ Left to right. A transparent sidebar (268px) over the grid: a blue Lucide
 terminal glyph next to the word **Lucavien** (it flips to **Herdr** on hover), a
 search button and a collapse button, the spaces list with per-space color chips
 and git branch tails, the agents list with status dots (amber spinner while working, a
-green dot when done, red when blocked), and a 40px footer with a single settings gear. Nothing
+green dot when done, red when blocked), and a 40px footer with a settings gear and, at
+its right end, the herdr-tui `⌥ Prefix` badge — there only while Ctrl+B waits. Nothing
 else — no Files or Changes panel, no buttons for them in the tab bar, no bottom
 status bar.
 
@@ -50,8 +51,9 @@ works.
 - **Spaces**: click to switch, right-click for the menu, drag to reorder. The
   avatar color is stored per space; git branch, ahead and behind appear after
   the name when they're unusual.
-- **Ctrl+B** opens the herdr-tui prefix card (nine rows). `?` swaps it for the
-  full table of the bindings it keeps and back without closing.
+- **Ctrl+B** opens nothing: a `⌥ Prefix` badge appears at the right end of the
+  footer while the next key is expected (four seconds), then goes. `?` opens the
+  guide — the full table of the bindings it keeps.
 - The layout hides nothing you need: zoom, splits, the picker, the tab and space
   menus are all the shipped ones.
 
@@ -111,9 +113,9 @@ once per block.
 | `spaces` | `spaces` | shipped `spaces`, root `.bg(t.chrome)` removed |
 | `agents` | `agents` | shipped `agents`, root `.bg(t.chrome)` removed (its sort menu still opens itself as an overlay, `props: { sortMenu: true }`) |
 | `brand` | `brand` | shipped `workspace-chrome`'s brand row, reworked below |
-| `footer` | `sidebar-footer` | shipped `workspace-chrome`'s footer, cut to one gear |
+| `footer` | `sidebar-footer` | shipped `workspace-chrome`'s footer, cut to one gear, plus the herdr-tui `⌥ Prefix` badge it shows while a prefix waits |
 
-`lib.js` holds what all five share — the layout `find()`, the 160px rail test and
+`lib.js` holds what all five share — `sidebar()`, the 160px rail test and
 `toggleSidebar()` — so the threshold and the width to return to cannot drift
 between them. `icons/` holds every SVG the mod draws, so nothing points into
 another mod's folder.
@@ -124,20 +126,28 @@ with them.
 
 The brand row carries the rework: Lucide `terminal.svg` in accent blue instead of
 the Herdr PNG, the Lucavien/Herdr hover swap, a search button and the collapse
-button. The footer is one 28px settings gear; the shipped "Add machine" row is
-dropped (settings → Machines still adds one).
+button. The footer is one 28px settings gear and the prefix badge; the shipped
+"Add machine" row is dropped (settings → Machines still adds one).
 - `herdr-tui-prefix` — not part of the layout's look and needs no block, only
-  keys, so it works in any layout. `mod.json` is `place: "none"` with a top
-  popup (520 wide, offset 64). Ctrl+B opens a nine-row card (`SHORT`); `?` swaps
-  it for the full table (`SECTIONS`, `INDEX`) of the bindings it keeps and back.
-  Shift+key rows are deliberately absent — the app's own keys cover those, and
-  shift after a prefix is easy to mistype. Rows with no Herdr-app command stay
-  listed and dimmed with a reason (`r` resize, `[` copy mode, `tab` cycling, `e`
-  scrollback, `o` notification target); pressing one posts a warning toast
-  instead of doing nothing. Everything else dispatches `pane.*`, `tab.*`,
-  `layout.toggle`, `window.minimize`, `app.settings`, or the shipped `picker`
-  overlay, and `q` minimizes where herdr-tui would detach. A literal Ctrl+B goes
-  out through `hc(["keys", terminal, "ctrl+b"])`.
+  keys, so it works in any layout. `mod.json` is `place: "none"` with a 1×1
+  borderless popup: `mod.open` there is a keyboard grab that draws nothing, and
+  the feedback lives in this footer instead. The mod keeps one shared value,
+  `prefix.armed` — `true` while it waits, `false` on any way out — and the
+  `footer` part draws the badge from it, only when it is true: an accent chip
+  (`bg(t.accent)`, `text_color(t.accent_foreground)`) with Lucide's `option.svg`
+  at 11px and `Prefix` in 10.5px semibold, and nothing otherwise. Its `init`
+  heals a stale flag, because a crash mid-prefix would leave it set. On the rail
+  (under 160px) the gear turns accent instead of a chip. `?` opens the
+  guide (`SECTIONS`, `INDEX`) — the full table of bindings it keeps — as a 520px
+  popup offset 64; `?` or Escape closes it. Shift+key rows are deliberately
+  absent — the app's own keys cover those, and shift after a prefix is easy to
+  mistype. Rows with no Herdr-app command stay listed and dimmed with a reason
+  (`r` resize, `[` copy mode, `tab` cycling, `e` scrollback, `o` notification
+  target); pressing one posts a warning toast instead of doing nothing.
+  Everything else dispatches `pane.*`, `tab.*`, `layout.toggle`,
+  `window.minimize`, `app.settings`, or the shipped `picker` overlay, and `q`
+  minimizes where herdr-tui would detach. A literal Ctrl+B goes out through
+  `hc(["keys", terminal, "ctrl+b"])`.
 
 **Pi logo** `custom-icons/pi.svg` is the official `pi.dev/logo-auto.svg`, wired
 by `programs.json` (`pi` → `custom-icons/pi.svg`, `tint: false` so it keeps its
@@ -201,6 +211,6 @@ the personal brand config.
       buttons, and there is no bottom status bar.
 - [ ] A running Pi agent shows the three-color logo in the sidebar and its pill.
 - [ ] Hovering the brand reads Herdr; hovering the gear highlights only the icon.
-- [ ] Ctrl+B shows the nine-row card over any layout, `?` swaps it for the full
-      table and back, `v` splits right, and Ctrl+B Ctrl+B types a prefix into the
-      shell.
+- [ ] Ctrl+B shows the `⌥ Prefix` badge in the footer and no card over any
+      layout; the next key acts and the badge goes, `?` opens the guide and closes
+      it again, `v` splits right, and Ctrl+B Ctrl+B types a prefix into the shell.
