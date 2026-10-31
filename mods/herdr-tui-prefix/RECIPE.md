@@ -51,7 +51,7 @@ signal. The next key acts:
 | `c` | New tab |
 | `n` / `p` | Next / previous tab |
 | `1`–`9` | Select tab 1–9 |
-| `b` | Toggle the sidebar |
+| `b` | Collapse the sidebar to its rail, or back to the width it had — the brand row's button, not Herdr's hide |
 | `g` | Go to an agent or terminal (the shipped `picker`) |
 | `s` | Settings |
 | `?` | Open the guide; in the guide, `?` closes it again. Nothing runs |
@@ -113,17 +113,23 @@ that holds the keyboard and draws nothing.
   `props().guide` picks the table over the empty waiting view.
 - **Data:** `SECTIONS`, a list of `[caption, rows]` where each row is
   `[key, label, command, args, note]`. `command` is a command name, a function
-  (for the picker popup), or `null` (no equivalent, `note` is the reason). An
-  `INDEX` map built from `SECTIONS` once at load is what a pressed key is looked
-  up in, so the guide and the key matching share one table.
+  (the picker popup, the sidebar toggle), or `null` (no equivalent, `note` is the
+  reason). An `INDEX` map built from `SECTIONS` once at load is what a pressed key
+  is looked up in, so the guide and the key matching share one table.
 - **A focusable view** on `gpui-kit` + `gpui-base`: `cx.focus_handle()` focused in
   `init`, `.track_focus(handle)`, `.on_key_down`, colors from `theme()`. It closes
   with `closeOverlay(props().overlay)`, and the wait is `cx.timer.after(4000, …)`.
   The waiting view is a 1×1 element that still tracks the handle and listens: it
   draws nothing, but `track_focus` is what puts the keyboard on it.
 - **Commands:** `pane.split`, `pane.go`, `pane.swap`, `pane.zoom`, `pane.close`,
-  `tab.new`, `tab.next`, `tab.prev`, `tab.select`, `layout.toggle`,
+  `tab.new`, `tab.next`, `tab.prev`, `tab.select`, `layout.resize`,
   `window.minimize`, `app.settings`.
+- **`b` is a function row, not `layout.toggle`:** it reads the `sidebar` block's
+  width, narrows to the rail (44px, 76px on macOS for the traffic lights) and
+  returns to `shared("sidebar.width")`. The 160px rail test, the memory key and
+  the rail widths are the chrome mods' convention; a mod cannot import another
+  mod's files, so `herdr-van/lib.js` and the shipped `workspace-chrome` implement
+  the same rule, and the key is what keeps all three toggles in agreement.
 - **Overlays:** `openOverlay({mod: "picker", kind: "popup", at: "top", offset: 40, width: 640, height: 0.8})`
   for `g`.
 - **Literal keys:** `focused()?.terminal` plus `hc(["keys", terminal, "ctrl+b"])`,
@@ -155,6 +161,8 @@ that holds the keyboard and draws nothing.
 - `?` is the mod's own key, so Herdr's key list (`app.help`) is not on the
   prefix: bind it in `keys.json` if you want it there.
 - `q` is not detach: it minimizes the window. Panes keep running either way.
+- `b` collapses the sidebar, it does not hide it. Herdr's own `ctrl-shift-b` is
+  `layout.toggle:sidebar` and still hides it; the prefix leaves that key as it is.
 - `r`, `[`, `tab`, `e` and `o` have no Herdr-app command (there is no pane
   resize, copy mode, pane cycling, scrollback editor or notification-target
   command). They are listed for muscle memory and explain themselves instead of
@@ -174,8 +182,9 @@ that holds the keyboard and draws nothing.
   draws nothing else: no card, no dimming, the terminal keeps its content. With
   no prefix waiting, the footer shows only the gear.
 - The next key runs its action and the badge disappears at once — `v` splits
-  right, `x` closes the pane, `1`–`9` switch tabs, `b` toggles the sidebar. If a
-  key does nothing, the waiting view is not tracking its focus handle.
+  right, `x` closes the pane, `1`–`9` switch tabs, `b` narrows the sidebar to its
+  rail and a second `b` returns it to the width it had. If a key does nothing, the
+  waiting view is not tracking its focus handle.
 - No key pressed: the badge goes after four seconds, and the next keystroke
   reaches the shell as typed.
 - Escape removes the badge without typing into the terminal.

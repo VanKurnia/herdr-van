@@ -12,7 +12,7 @@
 
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { closeOverlay, focused, hc, nextCommand, notify, openOverlay, props, run, setShared, theme } from "herdr";
+import { closeOverlay, focused, hc, layout, nextCommand, notify, openOverlay, props, run, setShared, shared, theme, window } from "herdr";
 
 // How long the prefix waits for its key. An armed prefix that never lets go
 // swallows the next keystroke whenever it comes, so it times out and the badge
@@ -24,6 +24,18 @@ const ARM = "prefix.armed";
 
 // Every picker row opens the same shipped popup.
 const openPicker = () => openOverlay({ mod: "picker", kind: "popup", at: "top", offset: 40, width: 640, height: 0.8 });
+
+// The sidebar button in the brand row, not Herdr's hide: narrow to the rail and
+// back to the width it had. A mod cannot import another mod's files, so this
+// repeats the chrome mods' rule — the 160px rail test and the `sidebar.width`
+// memory, so either toggle undoes the other.
+const toggleSidebar = () => {
+  const bar = layout()?.children?.find((n) => n.id === "sidebar");
+  const rail = (bar?.size?.px ?? Infinity) < 160;
+  if (!rail) setShared("sidebar.width", bar?.size?.px);
+  setShared("sidebar.collapsed", !rail);
+  run("layout.resize", { id: "sidebar", px: rail ? (shared("sidebar.width") ?? 268) : window()?.platform === "macos" ? 76 : 44 });
+};
 
 // [key, label, command, args, note]. `command` is an app command name, a
 // function (actions that take more than a command), or null (no equivalent —
@@ -55,7 +67,7 @@ const SECTIONS = [
   ]],
   ["Session", [
     ["g", "Go to an agent or terminal", openPicker],
-    ["b", "Toggle sidebar", "layout.toggle", { id: "sidebar" }],
+    ["b", "Toggle sidebar", toggleSidebar, null, "to the rail; ctrl-shift-b hides it"],
     ["s", "Settings", "app.settings"],
     ["q", "Minimize window", "window.minimize", {}, "no detach: panes keep running"],
     ["o", "Notification target", null, {}, "toasts go there when clicked"],
