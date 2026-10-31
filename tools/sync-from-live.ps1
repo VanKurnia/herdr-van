@@ -20,11 +20,13 @@ $ErrorActionPreference = 'Stop'
 $repo = Split-Path $PSScriptRoot -Parent
 if (!(Test-Path $HerdrHome)) { throw "Herdr home not found: $HerdrHome" }
 
-# App-generated files inside mod folders: never copy these.
+# Never copied down from the home folder: what the app generates (jsconfig.json,
+# gpui-kit.d.ts, *.error) and docs, whose installed copies go stale and would
+# overwrite edits made here.
 $skip = @('jsconfig.json', 'gpui-kit.d.ts')
 function Copy-Real($src, $dst) {
   $name = Split-Path $src -Leaf
-  if ($skip -contains $name -or $name -like '*.error') { return }
+  if ($skip -contains $name -or $name -match '\.(error|md)$') { return }
   $dir = Split-Path $dst -Parent
   if (!(Test-Path $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
   Copy-Item -Path $src -Destination $dst -Force
