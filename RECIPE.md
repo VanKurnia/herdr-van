@@ -50,7 +50,7 @@ works.
   avatar color is stored per space; git branch, ahead and behind appear after
   the name when they're unusual.
 - **Ctrl+B** opens the herdr-tui prefix card (nine rows). `?` swaps it for the
-  full table of herdr-tui's defaults and back without closing.
+  full table of the bindings it keeps and back without closing.
 - The layout hides nothing you need: zoom, splits, the picker, the tab and space
   menus are all the shipped ones.
 
@@ -116,16 +116,15 @@ layer, so three WezTerm layers were flattened into one here.
 - `herdr-tui-prefix` — not part of the layout's look and needs no block, only
   keys, so it works in any layout. `mod.json` is `place: "none"` with a top
   popup (520 wide, offset 64). Ctrl+B opens a nine-row card (`SHORT`); `?` swaps
-  it for the full table (`SECTIONS`, `INDEX`) of herdr-tui's
-  `herdr --default-config` `[keys]` defaults and back. Rows with no Herdr-app
-  command stay listed and dimmed with a reason (`r` resize, `[` copy mode,
-  `tab`/`shift+tab` cycling, `e` scrollback, `shift+p` rename pane, `shift+r`
-  reload, `o` notification target); pressing one posts a warning toast instead
-  of doing nothing. Everything else dispatches `pane.*`, `tab.*`, `space.*`,
-  `layout.toggle`, `window.minimize`, `app.settings`, or the shipped
-  `picker`/`worktree` overlays. `q` minimizes where herdr-tui would detach, and
-  `w`/`g` both open `picker`. A literal Ctrl+B goes out through
-  `hc(["keys", terminal, "ctrl+b"])`.
+  it for the full table (`SECTIONS`, `INDEX`) of the bindings it keeps and back.
+  Shift+key rows are deliberately absent — the app's own keys cover those, and
+  shift after a prefix is easy to mistype. Rows with no Herdr-app command stay
+  listed and dimmed with a reason (`r` resize, `[` copy mode, `tab` cycling, `e`
+  scrollback, `o` notification target); pressing one posts a warning toast
+  instead of doing nothing. Everything else dispatches `pane.*`, `tab.*`,
+  `layout.toggle`, `window.minimize`, `app.settings`, or the shipped `picker`
+  overlay, and `q` minimizes where herdr-tui would detach. A literal Ctrl+B goes
+  out through `hc(["keys", terminal, "ctrl+b"])`.
 
 **Pi logo** `custom-icons/pi.svg` is the official `pi.dev/logo-auto.svg`, wired
 by `programs.json` (`pi` → `custom-icons/pi.svg`, `tint: false` so it keeps its

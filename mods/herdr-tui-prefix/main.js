@@ -1,12 +1,13 @@
-// Herdr TUI prefix: herdr-tui's default prefix (Ctrl+B) and its default
-// bindings, for the Herdr app. Press Ctrl+B, release, press a key: the hint
-// waits for that one key and closes as soon as it has it, with no repeat
-// window holding the keyboard (herdr-tui has none either).
+// Herdr TUI prefix: herdr-tui's default prefix (Ctrl+B) over a trimmed subset
+// of its default bindings. Press Ctrl+B, release, press a key: the hint waits
+// for that one key and closes as soon as it has it, with no repeat window
+// holding the keyboard (herdr-tui has none either).
 //
-// The list mirrors `herdr --default-config`'s [keys] table
-// (herdr.dev/tui/docs/config-reference). A row with a null command is a
-// herdr-tui action the app has no command for: it stays listed, dimmed with
-// the reason, and pressing it says so instead of doing nothing.
+// Deliberately left out: every shift+key row (shift+t/x/n/w/d/g/p/r/tab). Shift
+// after a prefix is easy to mistype, and the app's own keys cover those actions.
+// A row with a null command is a herdr-tui action the app has no command for: it
+// stays listed, dimmed with the reason, and pressing it says so instead of doing
+// nothing.
 
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
@@ -35,34 +36,19 @@ const SECTIONS = [
     ["r", "Resize mode", null, {}, "drag a split's border"],
     ["[", "Copy mode", null, {}, "mouse-select, then ^⇧C"],
     ["tab", "Cycle pane", null, {}, "use h j k l"],
-    ["shift+tab", "Cycle pane back", null, {}, "use h j k l"],
     ["e", "Edit scrollback", null, {}, "no scrollback editor"],
-    ["shift+p", "Rename pane", null, {}, "panes take their terminal's name"],
   ]],
   ["Tabs", [
     ["c", "New tab", "tab.new"],
     ["n", "Next tab", "tab.next"],
     ["p", "Previous tab", "tab.prev"],
     ...Array.from({ length: 9 }, (_, i) => [String(i + 1), `Tab ${i + 1}`, "tab.select", { index: i + 1 }]),
-    ["shift+t", "Rename tab", "tab.rename"],
-    ["shift+x", "Close tab", "tab.close"],
-  ]],
-  ["Spaces", [
-    ["shift+n", "New space", "space.new"],
-    ["shift+w", "Rename space", "space.rename"],
-    ["shift+d", "Close space", "space.close"],
-    ["shift+g", "New worktree", () => openOverlay({
-      mod: "worktree", kind: "dialog", width: 460, height: 280,
-      props: { space: focused()?.space, folder: focused()?.cwd, action: "new" },
-    })],
-    ["w", "Space picker", openPicker],
-    ["b", "Toggle sidebar", "layout.toggle", { id: "sidebar" }],
   ]],
   ["Session", [
     ["g", "Go to an agent or terminal", openPicker],
+    ["b", "Toggle sidebar", "layout.toggle", { id: "sidebar" }],
     ["s", "Settings", "app.settings"],
     ["q", "Minimize window", "window.minimize", {}, "no detach: panes keep running"],
-    ["shift+r", "Reload config", null, {}, "file edits apply live"],
     ["o", "Notification target", null, {}, "toasts go there when clicked"],
   ]],
 ];
@@ -76,7 +62,7 @@ const SHORT = [
   ["v · -", "Split right / down"],
   ["h j k l", "Focus pane"],
   ["z · x", "Zoom / close pane"],
-  ["w · b", "Space picker / sidebar"],
+  ["b", "Toggle sidebar"],
   ["q", "Minimize window"],
   ["?", "All bindings"],
 ];

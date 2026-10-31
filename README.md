@@ -20,7 +20,7 @@ sit straight on that backdrop — no boxes, no bottom bar, no clutter.
 - **The Pi logo.** Pi agents wear their real three-color logo instead of the
   plain glyph.
 - **Ctrl+B, like the TUI.** A small mod brings the [Herdr TUI](https://herdr.dev/tui)'s
-  prefix into the app: Ctrl+B, then a key. `?` shows every binding.
+  prefix into the app: Ctrl+B, then a key. `?` lists everything it keeps.
 
 ## Add it
 
