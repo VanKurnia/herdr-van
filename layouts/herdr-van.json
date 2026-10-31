@@ -14,7 +14,10 @@
           "id": "brand",
           "type": "block",
           "content": {
-            "mod": "custom-chrome"
+            "mod": "herdr-van",
+            "props": {
+              "part": "brand"
+            }
           },
           "size": {
             "px": 46
@@ -29,7 +32,10 @@
               "id": "spaces",
               "type": "block",
               "content": {
-                "mod": "custom-spaces"
+                "mod": "herdr-van",
+                "props": {
+                  "part": "spaces"
+                }
               },
               "size": {
                 "weight": 1
@@ -40,7 +46,10 @@
               "id": "agents",
               "type": "block",
               "content": {
-                "mod": "custom-agents"
+                "mod": "herdr-van",
+                "props": {
+                  "part": "agents"
+                }
               },
               "size": {
                 "weight": 1
@@ -53,9 +62,9 @@
           "id": "sidebar-footer",
           "type": "block",
           "content": {
-            "mod": "custom-chrome",
+            "mod": "herdr-van",
             "props": {
-              "footer": true
+              "part": "footer"
             }
           },
           "size": {
@@ -77,7 +86,10 @@
           "id": "tabs",
           "type": "block",
           "content": {
-            "mod": "custom-tabs"
+            "mod": "herdr-van",
+            "props": {
+              "part": "tabs"
+            }
           },
           "size": {
             "px": 42

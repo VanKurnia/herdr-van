@@ -26,8 +26,9 @@ green dot when done, red when blocked), and a 40px footer with a single settings
 else — no Files or Changes panel, no buttons for them in the tab bar, no bottom
 status bar.
 
-Top to bottom on the right. A 42px tab bar of rounded pills, no pill ✕, a `+`
-tucked right after the last tab, one window-close button at the far right. Below
+Top to bottom on the right. A 42px tab bar of rounded pills on a solid
+`#16161e` strip (no grid behind it, so the pills stay readable), no pill ✕, a
+`+` tucked right after the last tab, one window-close button at the far right. Below
 it, one borderless terminal card with square corners, zero gap and zero outer
 padding: text in JetBrainsMono NFM (13px) sitting straight on the faint paper
 grid, which fades to solid indigo near the bottom edge. A 30px pane header is
@@ -71,13 +72,13 @@ Plus `titlebar: "none"`, `traffic_lights: [12, 16]`, a 1px `border` divider.
 The tree:
 
 - `sidebar` (column, 268px, `background: #16161e00`, not resizable)
-  - `brand` (block, 46px, `window_drag`) → `custom-chrome`
+  - `brand` (block, 46px, `window_drag`) → `herdr-van`, `props: { part: "brand" }`
   - `sidebar-lists` (column)
-    - `spaces` (block, weight 1, min 90) → `custom-spaces`
-    - `agents` (block, weight 1, min 90) → `custom-agents`
-  - `sidebar-footer` (block, 40px) → `custom-chrome`, `props: { footer: true }`
+    - `spaces` (block, weight 1, min 90) → `herdr-van`, `props: { part: "spaces" }`
+    - `agents` (block, weight 1, min 90) → `herdr-van`, `props: { part: "agents" }`
+  - `sidebar-footer` (block, 40px) → `herdr-van`, `props: { part: "footer" }`
 - `work` (column, not resizable)
-  - `tabs` (block, 42px, `window_drag`) → `custom-tabs`
+  - `tabs` (block, 42px, `window_drag`) → `herdr-van`, `props: { part: "tabs" }`
   - `work-body` (row, `padding: 0`)
     - `main` → `{ tab: "active", pane: {...} }` with `gap: 0`, `radius: 0`,
       `background: "#1a1b2600"`, 1px border, accent focus border, `lone: true`,
@@ -98,21 +99,33 @@ gradient `#000000` → `#1a1b26`, the WezTerm `grid-tile.png` lattice tiled at
 40px, and the top-third-transparent fade baked in. Herdr takes one background
 layer, so three WezTerm layers were flattened into one here.
 
-**Mods.** All five are plain copies plus small edits:
+**One mod, five parts.** `mods/herdr-van/` is the whole window chrome: the
+layout puts a copy of it in each block and names the part with
+`props: { part: … }`, and `main.js` starts only that part — so the spaces' git
+polling, the agents' timer and the brand's config watch each run once, never
+once per block.
 
-- `custom-tabs` — shipped `tabs` minus the pill ✕, with `+` moved inside the tab
-  scroll row and the minimize/maximize window buttons removed (close kept). The
-  Files/Changes toggle buttons render **only** when the layout has a `panel` node
-  *and* `shared("workspace.panels")` lists them, so this layout shows none and
-  nothing needs to be configured.
-- `custom-spaces`, `custom-agents`, `custom-chrome` — the shipped `spaces`,
-  `agents` and `workspace-chrome` with only their root `.bg(t.chrome)` removed;
-  hover, selected and border styling untouched (the sidebar node is transparent,
-  so the grid shows through).
-- `custom-chrome` also carries the brand and footer rework: Lucide
-  `terminal.svg` in accent blue instead of the Herdr PNG, the
-  Lucavien/Herdr hover swap, a search button, the collapse button, and a footer
-  reduced to one 28px settings gear.
+| part | block | built from |
+| --- | --- | --- |
+| `tabs` | `tabs` | shipped `tabs` minus the pill ✕, `+` moved inside the tab scroll row, min/max window buttons removed (close kept, and Windows keeps its own ✕ glyph) |
+| `spaces` | `spaces` | shipped `spaces`, root `.bg(t.chrome)` removed |
+| `agents` | `agents` | shipped `agents`, root `.bg(t.chrome)` removed (its sort menu still opens itself as an overlay, `props: { sortMenu: true }`) |
+| `brand` | `brand` | shipped `workspace-chrome`'s brand row, reworked below |
+| `footer` | `sidebar-footer` | shipped `workspace-chrome`'s footer, cut to one gear |
+
+`lib.js` holds what all five share — the layout `find()`, the 160px rail test and
+`toggleSidebar()` — so the threshold and the width to return to cannot drift
+between them. `icons/` holds every SVG the mod draws, so nothing points into
+another mod's folder.
+
+The tab bar draws no Files/Changes toggles at all: this layout has no `panel`
+node, so there is nothing to toggle and the shipped per-space panel memory went
+with them.
+
+The brand row carries the rework: Lucide `terminal.svg` in accent blue instead of
+the Herdr PNG, the Lucavien/Herdr hover swap, a search button and the collapse
+button. The footer is one 28px settings gear; the shipped "Add machine" row is
+dropped (settings → Machines still adds one).
 - `herdr-tui-prefix` — not part of the layout's look and needs no block, only
   keys, so it works in any layout. `mod.json` is `place: "none"` with a top
   popup (520 wide, offset 64). Ctrl+B opens a nine-row card (`SHORT`); `?` swaps
@@ -146,9 +159,11 @@ never copies it back.
 ```
 
 **Programs it runs:** `git` (`status`, `rev-parse`) per space — on that space's
-machine when it lives on another one — `whoami` once, one `powershell` call to
-resolve a symlinked config, and `hc` (`machine ls`, plus `keys ctrl+b` only when
-you press Ctrl+B twice). No network.
+machine when it lives on another one — `whoami` once, and `hc` (`machine ls`,
+plus `keys ctrl+b` only when you press Ctrl+B twice). On Windows only, and only
+when a `herdr-van-config.json` exists, one `powershell` call resolves a symlinked
+config so edits on either side reload (`fs/promises` can read files but cannot
+read a link). No network.
 
 **Keeping repo and machine in step** — the Herdr home is the source of truth:
 edit there, see it live, then run `pwsh -File tools/sync-from-live.ps1` and commit.
@@ -169,6 +184,8 @@ the personal brand config.
   reaches them. `?` is this mod's toggle, so `app.help` is not on the prefix.
 - Rename and close space/tab open Herdr's own dialogs, because the app asks for
   the name itself. Dimmed rows close the card and post a toast.
+- One mod means one folder: saving any of the five part files reloads all five
+  copies in place. A part that throws takes only its own block down.
 - Sizes assume a 1080p+ window; the 2560×1440 backdrop is `cover`-fit and holds
   up on HiDPI, and the 40px grid pitch survives any size by construction.
 - Layout files can lag the screen for a moment after an edit. A layout switch

@@ -1,8 +1,8 @@
 # herdr-van
 
 A [Herdr app](https://herdr.dev) layout: Tokyo Night colors, a faded paper grid
-behind everything, and a sidebar you can see the grid through. Your terminals
-sit straight on that backdrop — no boxes, no bottom bar, no clutter.
+behind the terminal and the sidebar. Your terminals sit straight on that
+backdrop — no boxes, no bottom bar, no clutter.
 
 ![herdr-van](preview.png)
 
@@ -10,8 +10,9 @@ sit straight on that backdrop — no boxes, no bottom bar, no clutter.
 
 - **Indigo everywhere.** Tokyo Night Night (`#1a1b26`, blue accent `#7aa2f7`),
   taken from `tokyonight.nvim`'s WezTerm palette.
-- **A grid behind your text.** The terminal, the sidebar and the tab bar all
-  share one faded paper grid (`backgrounds/tokyo-grid.png`).
+- **A grid behind your text.** The terminal and the sidebar sit on one faded
+  paper grid (`backgrounds/tokyo-grid.png`). The tab bar keeps a solid strip so
+  its pills stay readable.
 - **A sidebar that tells you what's happening.** Spaces with colored avatars and
   git branch / ahead-behind tails; agents with a spinner while they work, a red
   badge when they need you, a green dot when they're done.
@@ -92,10 +93,11 @@ No network, no `fetch`, nothing written outside `~/.config/herdr-app`.
 
 ## Built from
 
-`layouts/herdr-van.json` is a clone of the shipped `main` layout; the four
-`custom-*` mods are copies of the shipped `spaces`, `agents`, `tabs` and
-`workspace-chrome` with small edits. `RECIPE.md` is the full build brief if you
-want to know exactly what changed and why.
+`layouts/herdr-van.json` is a clone of the shipped `main` layout. `mods/herdr-van/`
+is the window's chrome in one folder — tab bar, spaces list, agents list, brand
+row, footer — each a part of the same mod, built from the shipped `spaces`,
+`agents`, `tabs` and `workspace-chrome`. `RECIPE.md` is the full build brief if
+you want to know exactly what changed and why.
 
 ## License
 
