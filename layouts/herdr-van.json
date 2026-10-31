@@ -66,8 +66,6 @@
       "size": {
         "px": 268
       },
-      "min": 44,
-      "max": 480,
       "background": "#16161e00",
       "resizable": false
     },
@@ -120,18 +118,7 @@
               }
             }
           ],
-          "padding": 0,
-          "gap": 8
-        },
-        {
-          "id": "status",
-          "type": "block",
-          "content": {
-            "mod": "workspace-status"
-          },
-          "size": {
-            "px": 28
-          }
+          "padding": 0
         }
       ],
       "resizable": false
