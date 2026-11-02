@@ -50,8 +50,10 @@ the icons and the background silently go missing.
 ## Needs
 
 - The Herdr app (built against 0.1.10).
-- `JetBrainsMono NFM` installed, for the UI font. Without it you get JetBrains
-  Mono and things look slightly different.
+- `JetBrainsMono NFM` installed, for the UI font, and named by its typographic
+  family (`JetBrainsMono Nerd Font Mono`) in the layout: Herdr resolves that name,
+  and anything it can't resolve falls back to plain JetBrains Mono, which has no
+  Nerd Font glyphs.
 - Roughly a 1080p window. The backdrop is 2560×1440 and cover-fits.
 
 ## Keys

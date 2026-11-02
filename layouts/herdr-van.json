@@ -144,9 +144,9 @@
     "fit": "cover"
   },
   "theme": "tokyo-night",
-  "font": "JetBrainsMono NFM",
+  "font": "JetBrainsMono Nerd Font Mono",
   "font_size": 13,
-  "ui_font": "JetBrainsMono NFM",
+  "ui_font": "JetBrainsMono Nerd Font Mono",
   "terminal_padding": [
     5,
     2

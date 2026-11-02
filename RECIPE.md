@@ -40,7 +40,7 @@ window-close button at the far right — both full bar height and square (42×42
 this bar height), drawn only while the pointer is on the
 bar, and filled `#1f2335` only while hovered. Below
 it, one borderless terminal card with square corners, zero gap and zero outer
-padding: text in JetBrainsMono NFM (13px) sitting straight on the faint paper
+padding: text in JetBrainsMono Nerd Font Mono (13px) sitting straight on the faint paper
 grid, which fades to solid indigo near the bottom edge. A 30px pane header is
 always visible, showing the program, the folder, and a spinner while an agent
 works.
@@ -72,8 +72,8 @@ works.
 name is the layout name, so it must be `herdr-van.json`. Root look only:
 
 ```json
-{ "theme": "tokyo-night", "font": "JetBrainsMono NFM", "font_size": 13,
-  "ui_font": "JetBrainsMono NFM", "terminal_opacity": 0,
+{ "theme": "tokyo-night", "font": "JetBrainsMono Nerd Font Mono", "font_size": 13,
+  "ui_font": "JetBrainsMono Nerd Font Mono", "terminal_opacity": 0,
   "terminal_padding": [5, 2],
   "background": { "image": "backgrounds/tokyo-grid.png", "fit": "cover" } }
 ```
@@ -192,6 +192,12 @@ It skips app-generated files (`jsconfig.json`, `gpui-kit.d.ts`, `*.error`) and
 the personal brand config.
 
 ## Watch out
+
+Font names: the file's legacy family (`JetBrainsMono NFM`) and its typographic
+family (`JetBrainsMono Nerd Font Mono`) differ. Herdr resolves the typographic
+one; the legacy name is silently ignored and the terminal falls back to plain
+JetBrains Mono — identical-looking text, but every Nerd Font icon (branch, play,
+hourglass) draws as an empty box.
 
 - `terminal_opacity: 0` puts terminal text straight on the image. On a brighter
   grid, raise it to 0.7–0.85.
