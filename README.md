@@ -10,19 +10,22 @@ backdrop — no boxes, no bottom bar, no clutter.
 
 - **Indigo everywhere.** Tokyo Night Night (`#1a1b26`, blue accent `#7aa2f7`),
   taken from `tokyonight.nvim`'s WezTerm palette.
-- **A grid behind your text.** The terminal and the sidebar sit on one faded
-  paper grid (`backgrounds/tokyo-grid.png`). The tab bar keeps a solid strip so
-  its pills stay readable.
+- **A grid behind your text.** The terminal, the sidebar and the tab bar sit on
+  one faded paper grid (`backgrounds/tokyo-grid.png`); the bar has no fill of its
+  own, so only the active tab and whatever the pointer is on are filled.
 - **A sidebar that tells you what's happening.** Spaces with colored avatars and
   git branch / ahead-behind tails; agents with a spinner while they work, a red
-  badge when they need you, a green dot when they're done.
+  badge when they need you, a green dot when they're done. Collapsed to the rail it
+  keeps the logo where the wordmark was, and swaps it for the expand button under
+  the pointer.
 - **A tab bar with nothing extra.** Pills, a `+` right after the last tab, one
   window-close button. No pill ✕, no Files/Changes buttons, no status bar.
 - **The Pi logo.** Pi agents wear their real three-color logo instead of the
   plain glyph.
 - **Ctrl+B, like the TUI.** A small mod brings the [Herdr TUI](https://herdr.dev/tui)'s
   prefix into the app: Ctrl+B, then a key. Nothing opens over the terminal — a
-  `⌥ Prefix` badge appears in the footer while it waits. `?` opens the guide.
+  `⌥ Prefix` badge appears in the footer while it waits (on the rail, the bare
+  glyph at the bottom of the agents list). `?` opens the guide.
 
 ## Add it
 

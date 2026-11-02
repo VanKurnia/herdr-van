@@ -4,7 +4,7 @@
 import { div, image, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { agents, terminals, panes, focused, spaces, run, theme, shared, setShared, setAgentOrder, openOverlay, closeOverlay, props } from "herdr";
-import { claimSidebarHover, narrow, toggleSidebar } from "./lib.js";
+import { claimSidebarHover, narrow } from "./lib.js";
 
 const clean = (s) => (s ?? "").replace(/^[^\p{L}\p{N}]+/u, "").trim();
 
@@ -458,21 +458,17 @@ export default class Agents {
         el.child(div().px(12).text_size(12).text_color(t.dim).child("No agent status yet. Agents show up here when they report their status. Older versions and agents inside tmux may not.")),
       )
       .child(v_flex().id("ag-list").flex_1().min_h(0).px(collapsed ? 0 : 8).overflow_y_scrollbar().mode("always").children(rows))
+      // A strip under the list: the rail's prefix indicator, the option glyph in accent
+      // while a prefix waits and nothing otherwise. The brand row at the top carries
+      // the sidebar's toggle, so this strip is the indicator alone.
       .child(
         h_flex()
+          .id("rail-prefix")
           .h(28)
-          .px(12)
           .items_center()
-          .justify_end()
-          .when(collapsed, (el) => el.justify_center().px(0))
-          .child(
-            div()
-              .id("collapse")
-              .text_size(13)
-              .text_color(t.dim)
-              .hover((s) => s.text_color(t.foreground))
-              .on_click(toggleSidebar)
-              .child(collapsed ? "»" : ""),
+          .justify_center()
+          .when(collapsed && Boolean(shared("prefix.armed")), (el) =>
+            el.child(svg("mods/herdr-van/icons/option.svg").size(14).text_color(t.accent)),
           ),
       );
   }

@@ -27,9 +27,18 @@ its right end, the herdr-tui `⌥ Prefix` badge — there only while Ctrl+B wait
 else — no Files or Changes panel, no buttons for them in the tab bar, no bottom
 status bar.
 
-Top to bottom on the right. A 42px tab bar of rounded pills on a solid
-`#16161e` strip (no grid behind it, so the pills stay readable), no pill ✕, a
-`+` tucked right after the last tab, one window-close button at the far right. Below
+Collapsed to the 44px rail, the brand row keeps only the glyph, centered where the
+wordmark was, and swaps it for the collapse button while the pointer is on the
+sidebar: the rail is never empty.
+
+Top to bottom on the right. A 42px tab bar with no fill of its own, so the same
+paper grid shows through it: every tab reserves a 2px bottom edge, the active one
+underlined in the accent (`#7aa2f7`) and filled `#1f2335` — no side or top border on
+any tab — the others underlined in nothing and unfilled until
+the pointer is on them. No pill ✕, a `+` tucked right after the last tab, one
+window-close button at the far right — both full bar height and square (42×42 at
+this bar height), drawn only while the pointer is on the
+bar, and filled `#1f2335` only while hovered. Below
 it, one borderless terminal card with square corners, zero gap and zero outer
 padding: text in JetBrainsMono NFM (13px) sitting straight on the faint paper
 grid, which fades to solid indigo near the bottom edge. A 30px pane header is
@@ -137,7 +146,9 @@ button. The footer is one 28px settings gear and the prefix badge; the shipped
   (`bg(t.accent)`, `text_color(t.accent_foreground)`) with Lucide's `option.svg`
   at 11px and `Prefix` in 10.5px semibold, and nothing otherwise. Its `init`
   heals a stale flag, because a crash mid-prefix would leave it set. On the rail
-  (under 160px) the gear turns accent instead of a chip. `?` opens the
+  (under 160px) the chip is dropped: the gear keeps the footer to itself, centred,
+  and the agents list's 28px bottom strip shows the `option.svg` glyph alone in
+  accent while a prefix waits — plain, no chip — and nothing otherwise. `?` opens the
   guide (`SECTIONS`, `INDEX`) — the full table of bindings it keeps — as a 520px
   popup offset 64; `?` or Escape closes it. Shift+key rows are deliberately
   absent — the app's own keys cover those, and shift after a prefix is easy to

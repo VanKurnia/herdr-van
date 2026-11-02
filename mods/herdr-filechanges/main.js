@@ -1,6 +1,6 @@
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, v_resizable, resizable_panel, Editor, EditorState } from "gpui-base";
-import { appHome, home, agents, focused, panes, props, closeOverlay, exec, notify, readTextFile, run, shared, setShared, theme, settings, watchFolder } from "herdr";
+import { appHome, home, agents, focused, panes, props, closeOverlay, exec, notify, readTextFile, run, shared, setShared, terminals, theme, settings, watchFolder } from "herdr";
 
 // The snapshot the `herdr-filechanges` pi extension writes: pi's own log of the
 // files it edited since the last accept (baselines from the session entries),
@@ -148,10 +148,25 @@ function piTerminal() {
   return (inSpace.find((a) => a.focused) ?? inSpace[0])?.address ?? null;
 }
 
+/**
+ * The pi's own address plus every terminal it started — its sub-agents, and theirs —
+ * because a sub-agent works on the same tree and its edits are the same work. The order
+ * puts the pi itself first, so its own files win when two sessions touched one path.
+ */
+function withSubagents(address) {
+  const all = terminals() ?? [];
+  const out = [address];
+  for (let i = 0; i < out.length; i++) {
+    for (const term of all) if (term.parent === out[i] && !out.includes(term.address)) out.push(term.address);
+  }
+  return out;
+}
+
 export default class HerdrFileChanges extends View {
   init(_props, cx) {
     this.address = null;
-    this.snapshot = null;
+    this.sources = [];      // the pi and its sub-agents, own first
+    this.snapshots = {};    // address -> snapshot, for every source that published
     this.open = null;
     this.mode = "diff";      // "diff" (what changed) or "file" (the whole file, highlighted)
     this.view = shared("herdr-filechanges.view") === "flat" ? "flat" : "tree";
@@ -163,7 +178,9 @@ export default class HerdrFileChanges extends View {
     this.rowsKey = null;
     this.fileText = null;    // { path, text } for "file" mode
     this.note = null;
+    this.onPane = false;     // the pointer is over this pane, so its actions are shown
     this.busy = false;
+    this.action = null;      // the command in flight, so only its own button says so
     this.watching = false;
     this.handle = cx.focus_handle();
     this.watchHost(cx);
@@ -210,34 +227,57 @@ export default class HerdrFileChanges extends View {
     const address = piTerminal();
     if (address !== this.address) {
       this.address = address;
-      this.snapshot = null;
+      this.sources = [];
+      this.snapshots = {};
       this.open = null;
       this.fileText = null;
       this.note = null;
     }
     if (!address) return;
+    const sources = withSubagents(address);
     cx.spawn(async (cx) => {
-      const text = await readTextFile(snapshotPath(address)).catch(() => null);
+      const snapshots = {};
+      for (const source of sources) {
+        // pi replaces its snapshot by rename, so a read can land mid-swap, and a session
+        // may never have written one: neither may blank a list the person is reading.
+        const text = await readTextFile(snapshotPath(source)).catch(() => null);
+        let fresh = null;
+        try { if (text !== null) fresh = JSON.parse(text); } catch { fresh = null; }
+        snapshots[source] = fresh ?? this.snapshots[source] ?? null;
+      }
       if (address !== this.address) return;
-      let snapshot = null;
-      try { snapshot = text ? JSON.parse(text) : null; } catch { snapshot = null; }
-      this.snapshot = snapshot;
-      const files = snapshot?.files ?? [];
+      this.sources = sources;
+      this.snapshots = snapshots;
+      const files = this.mergedFiles();
       if (!files.some((f) => f.path === this.open)) this.open = files[0]?.path ?? null;
       if (this.mode === "file") this.loadFile(this.file(), cx);
       this.refresh(cx);
     });
   }
 
+  /** Every source's files as one list, each row remembering which sessions own it. */
+  mergedFiles() {
+    const seen = new Map();
+    for (const source of this.sources) {
+      for (const file of this.snapshots[source]?.files ?? []) {
+        const known = seen.get(file.path);
+        // One path touched by two sessions is one row, but accepting must reach both.
+        if (known) { known.owners.push(source); continue; }
+        seen.set(file.path, { ...file, owners: [source] });
+      }
+    }
+    return [...seen.values()];
+  }
+
   file() {
-    return this.snapshot?.files?.find((f) => f.path === this.open) ?? null;
+    return this.mergedFiles().find((f) => f.path === this.open) ?? null;
   }
 
   /** The current file, for "file" mode: pi's absolute path is readable in the home folder. */
   loadFile(file, cx) {
     if (!file || (this.fileText && this.fileText.path === file.path)) return;
     const absolute = file.path.charAt(0) === "/" || file.path.charAt(1) === ":";
-    const cwd = (this.snapshot && this.snapshot.cwd) || "";
+    const cwd = this.snapshots[file.owners[0]]?.cwd ?? "";
     const path = absolute ? file.path : (cwd + "/" + file.path).replace(/\\/g, "/");
     this.fileText = { path: file.path, text: null };
     cx.spawn(async (cx) => {
@@ -348,20 +388,28 @@ export default class HerdrFileChanges extends View {
   }
 
   command(command, cx) {
-    const address = this.address;
-    if (!address || this.busy) return;
+    if (!this.address || this.busy) return;
+    // Every session shown here, not just the pi: a sub-agent baselines its own files, so
+    // leaving it out would leave its rows listed after the person accepted them.
+    const targets = [...new Set(this.mergedFiles().flatMap((f) => f.owners))];
+    if (!targets.length) return;
     this.busy = true;
+    this.action = command;
     this.note = null;
     cx.spawn(async (cx) => {
+      const failed = [];
       try {
-        // The extension's own command; `force` because a mod can never answer its confirm prompt.
-        const r = await exec("hc", ["send", address, `/${command} force`]);
-        if (r.code !== 0) throw new Error((r.stderr || r.stdout).trim());
-        notify({ title: command === "filechanges-accept" ? "pi changes accepted" : "pi changes reverted", body: address, level: "success" });
-      } catch (e) {
-        this.note = `Failed: ${e}`;
+        for (const address of targets) {
+          // The extension's own command; `force` because a mod can never answer its confirm prompt.
+          const r = await exec("hc", ["send", address, `/${command} force`])
+            .catch((e) => ({ code: -1, stdout: "", stderr: String(e) }));
+          if (r.code !== 0) failed.push(`${address}: ${(r.stderr || r.stdout).trim()}`);
+        }
+        if (failed.length) this.note = `Failed: ${failed.join("; ")}`;
+        else notify({ title: command === "filechanges-accept" ? "pi changes accepted" : "pi changes reverted", body: targets.join(", "), level: "success" });
       } finally {
         this.busy = false;
+        this.action = null;
         this.sync(cx);
         cx.notify();
       }
@@ -484,7 +532,7 @@ export default class HerdrFileChanges extends View {
   render(cx) {
     if (piTerminal() !== this.address) this.sync(cx);
     const t = theme();
-    const files = this.snapshot?.files ?? [];
+    const files = this.mergedFiles();
     const add = files.reduce((n, f) => n + f.added, 0);
     const rem = files.reduce((n, f) => n + f.removed, 0);
     const file = this.file();
@@ -492,22 +540,33 @@ export default class HerdrFileChanges extends View {
 
     // The editor is built in an event handler or task (render may not create state); read it here.
     const editor = this.editor;
+    // Pointer-in-pane tracking, attached to the elements that cover the pane: a mouse
+    // move arrives only while hovering, and the hover exit clears it again.
+    const inPane = (el) => el
+      .on_mouse_move((_e, cx) => { if (!this.onPane) { this.onPane = true; cx.notify(); } })
+      .on_hover((on, cx) => { if (!on && this.onPane) { this.onPane = false; cx.notify(); } });
     const pending = this.mode === "file" && Boolean(file) && (!this.fileText || this.fileText.path !== file.path);
     // Nothing to draw: no rows yet in diff mode, no editor yet in file mode.
     const empty = this.mode === "diff" ? this.rows.length === 0 : !editor;
 
+    const anySnapshot = this.sources.some((source) => Boolean(this.snapshots[source]));
     const headline = !this.address
       ? "No pi session in this space"
-      : !this.snapshot
+      : !anySnapshot
         ? `${this.address} hasn't published yet`
         : "No pi changes recorded";
-    const hint = !this.address || this.snapshot ? null : "restart pi there, or /reload";
+    const hint = !this.address || anySnapshot ? null : "restart pi there, or /reload";
 
     // 0.8 alpha: the window's background reads faintly through the body, rows stay legible.
     return v_flex().id("herdr-filechanges").size_full().min_h(0).overflow_hidden()
       .bg(t.background + "cc").text_color(t.foreground).track_focus(this.handle)
+      // "The pointer is in this pane": a mouse move is delivered only while hovering, and
+      // the hover exit clears it, so the footer's actions are here while the person is.
+      // It rides on these two wrappers rather than the root — a handler on a pane mod's
+      // root never fires — and together they cover every pixel of the pane.
+      .child(inPane(v_flex().id("pi-changes-body").flex_1().min_h(0))
       // The shell's own splitter: drag the divider, sizes live in the window and survive repaints.
-      .child(v_resizable("pi-changes-split").flex_1().min_h(0)
+        .child(v_resizable("pi-changes-split").flex_1().min_h(0)
         .child(resizable_panel().size(200).size_range(88, 900)
           .child(v_flex().id("files").size_full().min_h(0)
             .child(this.section("files-head", "File", files.length, t, h_flex().min_w(0).gap(5)
@@ -545,18 +604,21 @@ export default class HerdrFileChanges extends View {
                   .children(this.rows.map((row) => this.diffRow(row, t)))))
               .when(this.mode === "file" && Boolean(editor), (e) => e.child(Editor.new(editor)))
               .when(empty, (e) => e.child(div().p(8).text_size(11).text_color(t.dim)
-                .child(pending ? "Reading the file…" : "Select a file to see its changes")))))))
+                .child(pending ? "Reading the file…" : "Select a file to see its changes"))))))))
       .when(Boolean(this.note), (e) => e.child(div().px(8).pb(6).text_size(11).text_color(t.ansi1).child(this.note)))
-      .child(h_flex().flex_none().px(8).py(6).gap(6).items_center().border_t(1).border_color(t.border)
-        .child(this.button("pi-accept", this.busy ? "Accepting…" : "Accept", "check",
-          // Primary: the accent fill with its ink. `solid`/`solid_foreground` are the theme's own
-          // primary pair, but a theme may leave them undefined, which falls back to ink-on-paper.
-          { bg: enabled ? t.accent : t.raised, text: enabled ? t.accent_foreground : t.dim, hover: t.ansi12, hoverText: t.accent_foreground },
-          enabled, (_e, cx) => this.command("filechanges-accept", cx)))
-        .child(this.button("pi-revert", "Revert", "x",
-          { bg: t.raised, text: enabled ? t.ansi1 : t.dim, hover: t.ansi1 + "22", hoverText: t.ansi9 },
-          enabled, (_e, cx) => this.command("filechanges-decline", cx)))
+      // The actions are hover-only. The row keeps a fixed height (26px buttons + 12px of
+      // padding) so the diff above it never resizes as the pointer comes and goes.
+      .child(inPane(h_flex().id("pi-changes-actions").flex_none().h(38).px(8).gap(6).items_center().border_t(1).border_color(t.border).when(this.onPane, (e) => e
+          .child(this.button("pi-accept", this.busy && this.action === "filechanges-accept" ? "Accepting…" : "Accept", "check",
+            // Primary: the accent fill with its ink. `solid`/`solid_foreground` are the theme's own
+            // primary pair, but a theme may leave them undefined, which falls back to ink-on-paper.
+            { bg: enabled ? t.accent : t.raised, text: enabled ? t.accent_foreground : t.dim, hover: t.ansi12, hoverText: t.accent_foreground },
+            enabled, (_e, cx) => this.command("filechanges-accept", cx)))
+          .child(this.button("pi-revert", this.busy && this.action === "filechanges-decline" ? "Reverting…" : "Revert", "x",
+            { bg: t.raised, text: enabled ? t.ansi1 : t.dim, hover: t.ansi1 + "22", hoverText: t.ansi9 },
+            enabled, (_e, cx) => this.command("filechanges-decline", cx))))
         .child(div().flex_1())
-        .when(Boolean(this.address), (e) => e.child(div().text_size(10.5).text_color(t.dim).child(this.address))));
+        .when(Boolean(this.address), (e) => e.child(div().text_size(10.5).text_color(t.dim)
+          .child(this.sources.length > 1 ? `${this.address} +${this.sources.length - 1}` : this.address)))));
   }
 }
