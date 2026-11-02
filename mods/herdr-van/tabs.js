@@ -1,7 +1,7 @@
 // The tab bar: flat tabs, drag to reorder, and the + and window buttons, which are
 // drawn only while the pointer is on the bar. No per-tab X (close with ctrl-shift-w
-// or the right-click menu) and no Files/Changes toggles: this layout has no side
-// panel for them to toggle.
+// or the right-click menu) and no Files/Changes toggles: this layout's panel toggle
+// lives on the pane header instead (this mod's pane part, pi panes only).
 
 import { div, svg, image } from "gpui-kit";
 import { h_flex } from "gpui-base";

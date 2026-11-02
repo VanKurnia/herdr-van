@@ -33,7 +33,7 @@ function Copy-Real($src, $dst) {
 }
 
 # Mods
-foreach ($m in @('herdr-van', 'herdr-tui-prefix')) {
+foreach ($m in @('herdr-van', 'herdr-tui-prefix', 'herdr-filechanges')) {
   $src = Join-Path $HerdrHome "mods\$m"
   if (!(Test-Path $src)) { continue }
   Get-ChildItem $src -Recurse -File | ForEach-Object {
