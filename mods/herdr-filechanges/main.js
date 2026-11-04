@@ -631,8 +631,8 @@ export default class HerdrFileChanges extends View {
         .child(resizable_panel().size_range(120)
           .child(v_flex().id("code").size_full().min_h(0).child(codeHead).child(codeBody)));
     // 0.8 alpha: the window's background reads faintly through the body, rows stay legible.
-    // No footer: accepting and reverting are pi's own `/accept-changes` and
-    // `/decline-changes`, and the header names the pi these changes belong to.
+    // No footer: accepting and reverting run in the pi itself, `/filechanges-accept`
+    // and `/filechanges-decline`, which also asks the sub-agents it started.
     return v_flex().id("herdr-filechanges").size_full().min_h(0).overflow_hidden()
       .bg(t.background + "cc").text_color(t.foreground).track_focus(this.handle)
       .child(v_flex().id("pi-changes-body").flex_1().min_h(0).child(paneBody));

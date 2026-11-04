@@ -163,8 +163,12 @@ starts shut: one 22px `Code` bar at the foot of the list; clicking the bar (whil
 shut) or its chevron (while open) toggles it, and while shut nothing is read or
 parsed. Open, the pane splits half and half on a draggable divider, showing either
 the pi's patch (`Diff`) or the whole file (`File`), with wrap on or off. There is
-no actions footer — accepting and reverting are the pi's own `/accept-changes` and
-`/decline-changes` — and the panel header names the pi it watches. Opened as an
+no actions footer — accepting and reverting run in the pi itself, with
+`/filechanges-accept` and `/filechanges-decline` (pi's own change panel works too).
+A pi that started sub-agents asks each of them the same thing first and waits for
+their logs to empty, so one command covers the whole tree; a sub-agent that is
+still working, blocked, or out of reach is named in the notice instead of being
+skipped quietly. The panel header names the pi it watches. Opened as an
 overlay it draws its own close button. A file that cannot be read says so and
 points back at Diff.
 
@@ -232,6 +236,11 @@ hourglass) draws as an empty box.
 
 - `terminal_opacity: 0` puts terminal text straight on the image. On a brighter
   grid, raise it to 0.7–0.85.
+- The Pi-Changes panel reads one snapshot per pi, and a pi with sub-agents has
+  one per child too. Accept/decline reach a child by typing the command into its
+  terminal, so a child that starts a turn in the moment between deciding and
+  typing may take it later than intended; the notice then says it did not
+  confirm, and the log it left behind is still listed.
 - The backdrop is a snapshot, not live: restyle WezTerm's grid and you must
   re-compose `backgrounds/tokyo-grid.png` (gradient fill, `TextureBrush` tile at
   40px, four-stop fade). It hot-reloads once replaced.
