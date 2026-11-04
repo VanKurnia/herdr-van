@@ -19,6 +19,9 @@ const base = (path) => path.replace(/\/+$/, "").split("/").pop();
 // Changes made outside Herdr (an editor's save, a commit in another app): looked
 // for this often, in repos the list shows, while the window is in front.
 const FALLBACK = 60000;
+// A watcher's burst of writes under .git (a commit, a checkout) becomes one look at git,
+// a moment after the last write rather than once per wave.
+const SETTLE = 1500;
 
 // What a stored color name looks like on an avatar (the same in every mod
 // that draws space avatars): one strong color per hue, light and dark alike.
@@ -34,6 +37,7 @@ export default class Spaces {
     this.ready = {}; // machine -> its layout was readable at the last look
     this.at = {}; // space -> its where() at the last look
     this.watching = new Set(); // local repos' git folders
+    this.dirty = {}; // repo -> when a watcher last saw a write
     // Spaces made while this runs wait (at most a moment) for their git, so a
     // worktree appears under its repo instead of jumping there.
     this.shown = new Set(spaces().map((s) => s.id));
@@ -67,6 +71,13 @@ export default class Spaces {
     for (const s of sp) at[s.id] = where(s, ps);
     const keys = new Set(Object.values(at).filter((k) => JSON.parse(k)[1]));
     const due = new Set([...keys].filter((k) => !(k in this.git)));
+    // A repo whose watcher saw writes: look once the burst has settled.
+    for (const [repo, seen] of Object.entries(this.dirty)) {
+      if (now - seen < SETTLE) continue;
+      delete this.dirty[repo];
+      const mine = JSON.stringify([null, repo]);
+      for (const k of keys) if (this.git[k]?.repo === mine) due.add(k);
+    }
     for (const [id, k] of Object.entries(at)) if (this.at[id] && this.at[id] !== k && keys.has(k)) due.add(k);
     this.at = at;
     const spaceOf = {};
@@ -164,14 +175,17 @@ export default class Spaces {
   watch(repo, cx) {
     if (this.watching.has(repo)) return;
     this.watching.add(repo);
-    cx.spawn(async (cx) => {
+    cx.spawn(async () => {
       try {
         while (this.watching.has(repo)) {
           await watchFolder(repo);
-          const mine = JSON.stringify([null, repo]);
-          if (this.watching.has(repo)) this.refreshGit(Object.keys(this.git).filter((k) => this.git[k]?.repo === mine), cx);
+          // Noted, not acted on: `due` looks once the burst settles (SETTLE).
+          if (this.watching.has(repo)) this.dirty[repo] = Date.now();
         }
-      } catch { this.watching.delete(repo); }
+      } catch {
+        this.watching.delete(repo);
+        delete this.dirty[repo];
+      }
     });
   }
 
