@@ -102,9 +102,11 @@ No network, no `fetch`, nothing written outside `~/.config/herdr-app`.
 
 `layouts/herdr-van.json` is a clone of the shipped `main` layout. `mods/herdr-van/`
 is the window's chrome in one folder — tab bar, spaces list, agents list, brand
-row, footer — each a part of the same mod, built from the shipped `spaces`,
-`agents`, `tabs` and `workspace-chrome`. `RECIPE.md` is the full build brief if
-you want to know exactly what changed and why.
+row, footer, and a pane header that reworks the shipped one — each a part of the
+same mod, built from the shipped `spaces`, `agents`, `tabs`, `workspace-chrome`
+and `pane`. `mods/herdr-filechanges/` is the Pi-Changes panel that header opens,
+and `mods/herdr-tui-prefix/` the Ctrl+B prefix. `RECIPE.md` is the full build
+brief if you want to know exactly what changed and why.
 
 ## License
 

@@ -57,7 +57,10 @@ works.
   right-click for the menu, scroll wheel to cycle. `+` opens the standard
   new-tab menu (terminal or any installed agent). Close with `ctrl-shift-w`
   (there is no pill ✕).
-- **Spaces**: click to switch, right-click for the menu, drag to reorder. The
+- **Spaces**: click to switch, right-click for the menu, drag to reorder. While a
+  row is dragged it dims, a 2px accent line marks the edge the space will land on
+  (below when dragging down, above when dragging up), and a drop on another
+  machine's row is refused (`space.move` stays inside a machine). The
   avatar color is stored per space; git branch, ahead and behind appear after
   the name when they're unusual.
 - **Ctrl+B** opens nothing: a `⌥ Prefix` badge appears at the right end of the
@@ -93,7 +96,8 @@ The tree:
   - `work-body` (row, `padding: 0`)
     - `main` → `{ tab: "active", pane: {...} }` with `gap: 0`, `radius: 0`,
       `background: "#1a1b2600"`, 1px border, accent focus border, `lone: true`,
-      and a `pane` header (mod `pane`, 30px, top, `reveal: "always"`)
+      and a `pane` header — `{ "mod": "herdr-van", "props": { "part": "pane" } }`,
+      30px, top, `reveal: "always"`
 
 The `panel` (files/changes) and `status` nodes are gone. Nothing else was
 removed — panes still split, zoom and move exactly like `main`.
@@ -110,7 +114,7 @@ gradient `#000000` → `#1a1b26`, the WezTerm `grid-tile.png` lattice tiled at
 40px, and the top-third-transparent fade baked in. Herdr takes one background
 layer, so three WezTerm layers were flattened into one here.
 
-**One mod, five parts.** `mods/herdr-van/` is the whole window chrome: the
+**One mod, six parts.** `mods/herdr-van/` is the whole window chrome: the
 layout puts a copy of it in each block and names the part with
 `props: { part: … }`, and `main.js` starts only that part — so the spaces' git
 polling, the agents' timer and the brand's config watch each run once, never
@@ -120,11 +124,12 @@ once per block.
 | --- | --- | --- |
 | `tabs` | `tabs` | shipped `tabs` minus the pill ✕, `+` moved inside the tab scroll row, min/max window buttons removed (close kept, and Windows keeps its own ✕ glyph) |
 | `spaces` | `spaces` | shipped `spaces`, root `.bg(t.chrome)` removed |
-| `agents` | `agents` | shipped `agents`, root `.bg(t.chrome)` removed (its sort menu still opens itself as an overlay, `props: { sortMenu: true }`) |
+| `agents` | `agents` | shipped `agents`, root `.bg(t.chrome)` removed (its sort menu still opens itself as an overlay, `props: { sortMenu: true }`); pins come from the terminal (`terminal.pin`), not from the mod |
 | `brand` | `brand` | shipped `workspace-chrome`'s brand row, reworked below |
 | `footer` | `sidebar-footer` | shipped `workspace-chrome`'s footer, cut to one gear, plus the herdr-tui `⌥ Prefix` badge it shows while a prefix waits |
+| `pane` | each pane's header | shipped `pane` header reworked below: icon, name, folder, status, split/zoom/close, and the Pi-Changes toggle on a pi pane |
 
-`lib.js` holds what all five share — `sidebar()`, the 160px rail test and
+`lib.js` holds what the sidebar parts share — `sidebar()`, the 160px rail test and
 `toggleSidebar()` — so the threshold and the width to return to cannot drift
 between them. `icons/` holds every SVG the mod draws, so nothing points into
 another mod's folder.
@@ -137,6 +142,32 @@ The brand row carries the rework: Lucide `terminal.svg` in accent blue instead o
 the Herdr PNG, the Lucavien/Herdr hover swap, a search button and the collapse
 button. The footer is one 28px settings gear and the prefix badge; the shipped
 "Add machine" row is dropped (settings → Machines still adds one).
+
+The pane header is its own part (`props: { part: "pane" }`), because the shipped
+header has no Pi-Changes toggle. Each row shows the program's icon, the agent's
+name or the terminal's title, the live folder, and the agent's status — a spinner
+while working, a "Needs you" pill when blocked, a dot when done. On a pi pane it
+also shows the Pi-Changes toggle, accented while the tab already has the panel;
+every button (toggle, split right, split down, zoom, close) appears on hover. The
+toggle opens the panel with `pane.split { direction: "right", pane, mod:
+"herdr-filechanges", props: { terminal } }`, so the panel is pinned to that pi
+and closes with it; toggling again closes just the panel. A panel's own header
+reads Pi Changes with the watched pi's address beside it. The whole row focuses
+its pane on click, so each button stops propagation.
+
+The Pi Changes panel (`mods/herdr-filechanges/`) reads the snapshot the pi
+extension writes under `data/herdr-filechanges/<terminal>.json` — on the machine
+the pi runs on — and lists the files that pi and its sub-agents changed since the
+last accept, with added/removed counts, in a tree or a flat list. The Code section
+starts shut: one 22px `Code` bar at the foot of the list; clicking the bar (while
+shut) or its chevron (while open) toggles it, and while shut nothing is read or
+parsed. Open, the pane splits half and half on a draggable divider, showing either
+the pi's patch (`Diff`) or the whole file (`File`), with wrap on or off. There is
+no actions footer — accepting and reverting are the pi's own `/accept-changes` and
+`/decline-changes` — and the panel header names the pi it watches. Opened as an
+overlay it draws its own close button. A file that cannot be read says so and
+points back at Diff.
+
 - `herdr-tui-prefix` — not part of the layout's look and needs no block, only
   keys, so it works in any layout. `mod.json` is `place: "none"` with a 1×1
   borderless popup: `mod.open` there is a keyboard grab that draws nothing, and
@@ -205,13 +236,14 @@ hourglass) draws as an empty box.
   re-compose `backgrounds/tokyo-grid.png` (gradient fill, `TextureBrush` tile at
   40px, four-stop fade). It hot-reloads once replaced.
 - Version skew: the mods record `cloned_from` 0.1.9 and the layout 0.1.8. On a
-  newer Herdr, re-clone the four mods and re-apply the small diffs rather than
+  newer Herdr, re-clone the five shipped mods it is built from (`tabs`, `spaces`,
+  `agents`, `workspace-chrome`, `pane`) and re-apply the small diffs rather than
   keeping stale copies.
 - Ctrl+B is taken from every terminal program, tmux included. Ctrl+B Ctrl+B
   reaches them. `?` is this mod's toggle, so `app.help` is not on the prefix.
 - Rename and close space/tab open Herdr's own dialogs, because the app asks for
   the name itself. Dimmed rows close the card and post a toast.
-- One mod means one folder: saving any of the five part files reloads all five
+- One mod means one folder: saving any of the six part files reloads all six
   copies in place. A part that throws takes only its own block down.
 - Sizes assume a 1080p+ window; the 2560×1440 backdrop is `cover`-fit and holds
   up on HiDPI, and the 40px grid pitch survives any size by construction.
@@ -223,7 +255,7 @@ hourglass) draws as an empty box.
 - [ ] `layout.switch` to `herdr-van` shows the indigo window with the grid
       visible inside the terminal and behind the sidebar, brand top-left.
 - [ ] `herdr-app status` has no `*.error`, and `herdr-app check` passes for each
-      of the five mods.
+      of the three mods.
 - [ ] Tab pills have no ✕, `+` follows the last tab, there are no Files/Changes
       buttons, and there is no bottom status bar.
 - [ ] A running Pi agent shows the three-color logo in the sidebar and its pill.
