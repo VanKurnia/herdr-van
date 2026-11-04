@@ -8,8 +8,8 @@ import { claimSidebarHover, narrow } from "./lib.js";
 
 const clean = (s) => (s ?? "").replace(/^[^\p{L}\p{N}]+/u, "").trim();
 
-function lead(tab, all = panes()) {
-  const mine = all.filter(p => p.tab === tab.id && p.terminal);
+// The pane whose title speaks for a tab: its agent, else the focused one, else the first.
+function lead(mine) {
   return mine.find(p => p.program?.agent) ?? mine.find(p => p.focused) ?? mine[0];
 }
 
@@ -183,13 +183,14 @@ export default class Agents {
   }
 
   // Live sub-agents of `addr`, depth first, each with the tree lines in front of it.
-  tree(all, addr, lead = []) {
-    const kids = all.filter((k) => k.parent === addr && k.state === "live");
+  // `kidsOf` is built once per render (see `render`): parent address -> live children.
+  tree(kidsOf, addr, lead = []) {
+    const kids = kidsOf.get(addr) ?? [];
     return kids.flatMap((k, i) => {
       const last = i === kids.length - 1;
       return [
         { t: k, lines: [...lead, last ? "└" : "├"] },
-        ...this.tree(all, k.address, [...lead, last ? "" : "│"]),
+        ...this.tree(kidsOf, k.address, [...lead, last ? "" : "│"]),
       ];
     });
   }
@@ -241,12 +242,30 @@ export default class Agents {
     let list = agents();
     this.listed = new Map(list.map((a) => [a.address, a.status]));
     const all = terminals();
+    const ps = panes();
     const shown = focused()?.agent;
     const now = Date.now();
     this.track(list, now);
     this.hold(list);
     const byPriority = sort.id === "priority";
-    const urgency = new Map(list.map((a) => [a.address, Math.max(this.rank(a), ...this.tree(all, a.address).map((s) => RANK[kidStatus(s.t, this.listed)] ?? 0))]));
+    // One pass per array: the sub-agent tree, the tabs and the panes are read per agent
+    // below, and walking `all` once per row is the expensive part of a render.
+    const kidsOf = new Map();
+    for (const k of all) {
+      if (!k.parent || k.state !== "live") continue;
+      const kids = kidsOf.get(k.parent);
+      if (kids) kids.push(k);
+      else kidsOf.set(k.parent, [k]);
+    }
+    const panesByTab = new Map();
+    for (const p of ps) {
+      if (!p.terminal || !p.tab) continue;
+      const mine = panesByTab.get(p.tab);
+      if (mine) mine.push(p);
+      else panesByTab.set(p.tab, [p]);
+    }
+    const tabs = spaces().flatMap((s) => s.tabs);
+    const urgency = new Map(list.map((a) => [a.address, Math.max(this.rank(a), ...this.tree(kidsOf, a.address).map((s) => RANK[kidStatus(s.t, this.listed)] ?? 0))]));
     const rankOf = (a) => urgency.get(a.address);
     if (byPriority) list = [...list].sort((x, y) => rankOf(y) - rankOf(x) || this.since(y) - this.since(x) || y.seq - x.seq);
     this.adoptPins(all);
@@ -256,7 +275,7 @@ export default class Agents {
     setAgentOrder(list.map((a) => a.address));
 
     const withKids = (a, i) => {
-      const subs = collapsed ? [] : this.tree(all, a.address);
+      const subs = collapsed ? [] : this.tree(kidsOf, a.address);
       const r = row(a, i, subs);
       if (this.folded.has(a.address)) return [r];
       return [r, ...subs.map((s) => this.subRow(t, s, shown, byPriority))];
@@ -291,16 +310,17 @@ export default class Agents {
     // A row reads "space \u00b7 detail": the detail is a tab someone named or the
     // agent's own title, never an automatic tab number unless two rows would
     // otherwise read the same.
-    const tabs = spaces().flatMap(s => s.tabs);
+    const leads = new Map(tabs.map((tab) => [tab.id, lead(panesByTab.get(tab.id) ?? [])]));
     const label = (a) => {
-      const tab = tabs.find(tab => tab.id === a.tab);
-      return tab ? title(tab, lead(tab)) : a.title || a.program?.name || "";
+      const tab = tabs.find((tab) => tab.id === a.tab);
+      return tab ? title(tab, leads.get(tab.id)) : a.title || a.program?.name || "";
     };
-    const detail = new Map(list.map(a => [a.address, /^\d+$/.test(label(a)) ? null : label(a)]));
+    const labels = new Map(list.map((a) => [a.address, label(a)]));
+    const detail = new Map(list.map((a) => [a.address, /^\d+$/.test(labels.get(a.address)) ? null : labels.get(a.address)]));
     const seen = {};
     for (const a of list) { const k = `${a.space_name}\u0000${detail.get(a.address) ?? ""}`; seen[k] = (seen[k] ?? 0) + 1; }
     for (const a of list) {
-      if (detail.get(a.address) == null && seen[`${a.space_name}\u0000`] > 1) detail.set(a.address, label(a));
+      if (detail.get(a.address) == null && seen[`${a.space_name}\u0000`] > 1) detail.set(a.address, labels.get(a.address));
     }
 
     const row = (a, i, subs = []) => {
@@ -345,7 +365,8 @@ export default class Agents {
       // Under a space header the space goes without saying; an automatic tab number says nothing.
       // Without a space header above (priority, pinned) the row names its space.
       const full = byPriority || isPinned;
-      const name = full ? a.space_name || label(a) : more ?? (/^\d+$/.test(label(a)) ? a.program?.name || label(a) : label(a));
+      const mine = labels.get(a.address);
+      const name = full ? a.space_name || mine : more ?? (/^\d+$/.test(mine) ? a.program?.name || mine : mine);
       return h_flex()
         .id(`ag-${a.address}`)
         .px(8)
