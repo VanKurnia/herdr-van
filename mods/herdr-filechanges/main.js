@@ -280,11 +280,11 @@ export default class HerdrFileChanges extends View {
     const absolute = file.path.charAt(0) === "/" || file.path.charAt(1) === ":";
     const cwd = this.snapshots[file.owner]?.cwd ?? "";
     const path = absolute ? file.path : (cwd + "/" + file.path).replace(/\\/g, "/");
-    this.fileText = { path: file.path, text: null };
+    this.fileText = { path: file.path, text: null, reading: true };
     cx.spawn(async (cx) => {
       const text = await readTextFile(path).catch(() => null);
       if (this.fileText?.path !== file.path) return;
-      this.fileText = { path: file.path, text: text === null ? null : text.slice(0, 400_000) };
+      this.fileText = { path: file.path, text: text === null ? null : text.slice(0, 400_000), reading: false };
       this.refresh(cx);
     });
   }
@@ -530,7 +530,9 @@ export default class HerdrFileChanges extends View {
 
     // The editor is built in an event handler or task (render may not create state); read it here.
     const editor = this.editor;
-    const pending = this.mode === "file" && Boolean(file) && (!this.fileText || this.fileText.path !== file.path);
+    const mine = file && this.fileText?.path === file.path ? this.fileText : null;
+    const reading = this.mode === "file" && Boolean(file) && (!mine || mine.reading);
+    const unreadable = this.mode === "file" && Boolean(mine) && !mine.reading && mine.text === null;
     // Nothing to draw: no rows yet in diff mode, no editor yet in file mode.
     const empty = this.mode === "diff" ? this.rows.length === 0 : !editor;
 
@@ -589,7 +591,11 @@ export default class HerdrFileChanges extends View {
           .children(this.rows.map((row) => this.diffRow(row, t)))))
       .when(this.mode === "file" && Boolean(editor), (e) => e.child(Editor.new(editor)))
       .when(empty, (e) => e.child(div().p(8).text_size(11).text_color(t.dim)
-        .child(pending ? "Reading the file…" : "Select a file to see its changes")));
+        .child(reading
+          ? "Reading the file…"
+          : unreadable
+            ? "This file can't be read here. Its changes are in Diff."
+            : "Select a file to see its changes")));
 
     // Shut: the File list takes the pane and the Code bar sits at its foot. Open: the shell's
     // splitter, half each — neither panel names a size, so expanding Code takes half the pane.
