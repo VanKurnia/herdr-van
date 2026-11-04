@@ -60,7 +60,8 @@ export default class Agents {
     this.folded = new Set();
     // Each agent's last state and when it changed (ms), kept across restarts.
     this.changed = JSON.parse(localStorage.getItem("changed") ?? "{}");
-    this.pins = JSON.parse(localStorage.getItem("pins") ?? "[]");
+    // Pins used to live here; `adoptPins` hands them to the terminals that still exist.
+    this.pendingPins = JSON.parse(localStorage.getItem("pins") ?? "[]");
     cx.timer.every(30000, (cx) => cx.notify());
   }
 
@@ -81,19 +82,16 @@ export default class Agents {
     localStorage.setItem("changed", JSON.stringify(this.changed));
   }
 
-  setPins(pins) {
-    this.pins = pins;
-    localStorage.setItem("pins", JSON.stringify(pins));
-  }
-
-  // Drops pins of agents that ended. Only for machines the list has heard from:
-  // right after a start, or while a machine connects, its agents aren't listed yet.
-  prunePins(all) {
-    const machine = (addr) => (addr.includes("/") ? addr.split("/")[0] : "");
-    const heard = new Set(all.map((k) => machine(k.address)));
+  // One-time: the pin list used to be this mod's own. Each pin becomes the terminal's
+  // (`terminal.pin`), so every Herdr client sees it and it ends with the terminal. A pin
+  // whose terminal isn't listed yet stays in the key and is retried on the next render.
+  adoptPins(all) {
+    if (!this.pendingPins.length) return;
     const live = new Set(all.filter((k) => k.state === "live").map((k) => k.address));
-    const kept = this.pins.filter((p) => !heard.has(machine(p)) || live.has(p));
-    if (kept.length !== this.pins.length) this.setPins(kept);
+    for (const address of this.pendingPins) if (live.has(address)) run("terminal.pin", { terminal: address, pinned: true });
+    this.pendingPins = this.pendingPins.filter((address) => !live.has(address));
+    if (this.pendingPins.length) localStorage.setItem("pins", JSON.stringify(this.pendingPins));
+    else localStorage.removeItem("pins");
   }
 
   since(a) {
@@ -251,9 +249,9 @@ export default class Agents {
     const urgency = new Map(list.map((a) => [a.address, Math.max(this.rank(a), ...this.tree(all, a.address).map((s) => RANK[kidStatus(s.t, this.listed)] ?? 0))]));
     const rankOf = (a) => urgency.get(a.address);
     if (byPriority) list = [...list].sort((x, y) => rankOf(y) - rankOf(x) || this.since(y) - this.since(x) || y.seq - x.seq);
-    this.prunePins(all);
-    const pinned = this.pins.map((p) => list.find((a) => a.address === p)).filter(Boolean);
-    const rest = list.filter((a) => !this.pins.includes(a.address));
+    this.adoptPins(all);
+    const pinned = list.filter((a) => a.pinned);
+    const rest = list.filter((a) => !a.pinned);
     list = [...pinned, ...rest];
     setAgentOrder(list.map((a) => a.address));
 
@@ -326,7 +324,7 @@ export default class Agents {
       }
       const when = this.since(a);
       const idle = a.status === "idle" && !a.focused;
-      const isPinned = this.pins.includes(a.address);
+      const isPinned = a.pinned;
       const pin = div()
         .id(`pin-${a.address}`)
         .flex_none()
@@ -338,7 +336,7 @@ export default class Agents {
         .tooltip(isPinned ? "Unpin" : "Pin to the top")
         .on_click((_e, cx) => {
           cx.stop_propagation();
-          this.setPins(isPinned ? this.pins.filter((p) => p !== a.address) : [...this.pins, a.address]);
+          run("terminal.pin", { terminal: a.address, pinned: !a.pinned });
           // The row moves away from under the pointer, and no hover-out comes.
           this.hovered = null;
           cx.notify();
