@@ -190,9 +190,10 @@ export default class HerdrFileChanges extends View {
     this.rowsKey = null;
     this.fileText = null;    // { path, text } for "file" mode
     this.watching = false;
+    this.hostTab = null;   // the tab the pinning host pane lives in, once seen
+    this.closing = false;  // the host is gone and this panel has asked to close
     this.publishedTab = null;  // the tab whose header names the pi this panel shows
     this.handle = cx.focus_handle();
-    this.watchHost(cx);
     this.sync(cx);
     // The extension replaces the snapshot atomically; watch its folder instead of polling.
     cx.spawn(async (cx) => {
@@ -213,24 +214,24 @@ export default class HerdrFileChanges extends View {
     cx.timer.every(5000, (cx) => { if (!this.watching || this.sources.some((s) => splitAddress(s).on)) this.sync(cx); });
   }
 
-  // A split pinned to a terminal belongs to it: when that terminal's pane goes away, so
-  // does this panel. Panes carry no props, so the panel finds itself by mod name in the tab
-  // it was created in — remembered once, because it stays where it was created.
+  // A split pinned to a terminal belongs to it: when that terminal's pane goes away, so does
+  // this panel. Panes carry no props, so the panel finds itself by mod name in the tab it was
+  // created in — remembered once, because it stays where it was created. Render re-runs on
+  // every pane change, so this needs no timer of its own.
   watchHost(cx) {
+    if (this.closing) return;
     const pinned = pinnedTerminal();
     if (!pinned) return;
-    let hostTab = null;
-    const watch = cx.timer.every(1000, () => {
-      const host = panes().find((p) => p.terminal === pinned);
-      if (host) {
-        if (!hostTab) hostTab = host.tab;
-        return;
-      }
-      if (!hostTab) return; // never saw it: not ours to close
-      const self = panes().find((p) => p.mod === "herdr-filechanges" && p.tab === hostTab);
-      watch.cancel();
-      if (self) run("pane.close", { pane: self.pane });
-    });
+    const host = panes().find((p) => p.terminal === pinned);
+    if (host) {
+      this.hostTab ??= host.tab;
+      return;
+    }
+    if (!this.hostTab) return; // never saw it: not ours to close
+    const self = panes().find((p) => p.mod === "herdr-filechanges" && p.tab === this.hostTab);
+    this.closing = true;
+    // Not run inside render: the close is a structural command, so it goes out on a task.
+    if (self) cx.spawn(async () => { run("pane.close", { pane: self.pane }); });
   }
 
   sync(cx) {
@@ -540,6 +541,7 @@ export default class HerdrFileChanges extends View {
   }
 
   render(cx) {
+    this.watchHost(cx);
     if (piTerminal() !== this.address) this.sync(cx);
     const t = theme();
     const files = this.mergedFiles();
