@@ -278,16 +278,28 @@ export default class Spaces {
       .rounded(8)
       .when(on, (el) => el.bg(t.selected))
       .when(!on, (el) => el.hover((s) => s.bg(t.hover)))
-      .when(this.pressed !== null && this.over === i && this.pressed !== i, (el) => el.border_t(2).border_color(t.accent))
+      .when(this.pressed === i && this.over !== i, (el) => el.opacity(0.5))
+      .when(this.pressed !== null && this.over === i && this.pressed !== i, (el) => el.child(
+        div().absolute().left(0).right(0).h(2).bg(t.accent)
+          .when(this.pressed < i, (line) => line.bottom(0))
+          .when(this.pressed > i, (line) => line.top(0)),
+      ))
       .on_mouse_down("left", () => {
         this.pressed = i;
         this.over = i;
       })
+      .on_mouse_move((_e, cx) => {
+        if (this.pressed === null) return;
+        const source = spaces()[this.pressed];
+        const over = source && (source.machine ?? null) === (w.machine ?? null) ? i : null;
+        if (this.over !== over) { this.over = over; cx.notify(); }
+      })
       .on_mouse_up("left", (_e, cx) => {
-        const from = this.pressed;
+        const from = this.pressed, over = this.over;
         this.pressed = null;
-        if (from !== null && from !== i) run("space.move", { id: spaces()[from].id, index: i + 1 });
-        else run("space.select", { id: w.id });
+        this.over = null;
+        if (from !== null && over === i && from !== i) run("space.move", { id: spaces()[from].id, index: i + 1 });
+        else if (from === i) run("space.select", { id: w.id });
         cx.notify();
       })
       .on_mouse_down("right", () => this.menu(w))
@@ -340,7 +352,7 @@ export default class Spaces {
         .when(!collapsed, el => el.child("Spaces"))
         .when(onSidebar(), el => el.child(add)))
       .child(v_flex().flex_1().min_h(0).px(8).pb(14).overflow_y_scrollbar().mode("always")
-        .on_mouse_up("left", (_e, cx) => { this.pressed = null; cx.notify(); })
+        .on_mouse_up("left", (_e, cx) => { this.pressed = null; this.over = null; cx.notify(); })
         .children(this.grouped(t, collapsed)));
   }
 }
