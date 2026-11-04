@@ -177,6 +177,7 @@ export default class HerdrFileChanges extends View {
     this.address = null;
     this.sources = [];      // the pi and its sub-agents, own first
     this.snapshots = {};    // address -> snapshot, for every source that published
+    this.merged = null;    // { sources, snapshots, files }: the last merged list
     this.open = null;
     this.mode = "diff";      // "diff" (what changed) or "file" (the whole file, highlighted)
     this.codeShut = true;     // the Code section opens shut; nothing is read or parsed until asked
@@ -266,8 +267,14 @@ export default class HerdrFileChanges extends View {
     });
   }
 
-  /** Every source's files as one list, each row remembering the session it came from. */
+  /**
+   * Every source's files as one list, each row remembering the session it came from.
+   * `sync` replaces both inputs wholesale, so their identity is the cache key: one render
+   * asks for this list several times (counts, the open file, the diff rows).
+   */
   mergedFiles() {
+    const last = this.merged;
+    if (last && last.sources === this.sources && last.snapshots === this.snapshots) return last.files;
     const seen = new Map();
     for (const source of this.sources) {
       for (const file of this.snapshots[source]?.files ?? []) {
@@ -276,7 +283,9 @@ export default class HerdrFileChanges extends View {
         if (!seen.has(file.path)) seen.set(file.path, { ...file, owner: source });
       }
     }
-    return [...seen.values()];
+    const files = [...seen.values()];
+    this.merged = { sources: this.sources, snapshots: this.snapshots, files };
+    return files;
   }
 
   file() {
