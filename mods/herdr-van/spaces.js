@@ -48,9 +48,10 @@ export default class Spaces {
     this.folded = new Set(JSON.parse(localStorage.getItem("machines.folded") ?? "[]"));
     this.refreshMachines(cx);
     cx.timer.every(15000, cx => this.refreshMachines(cx));
-    // `git status` walks the whole tree, on another machine a process there:
-    // only when its answer could have changed (see `due`).
-    cx.timer.every(250, (cx) => this.checkNew(cx));
+    // The rest of the list is event-driven (render re-runs on every data change); this tick
+    // only notices a new space, a space that moved, a finished turn, a machine that came
+    // back, and the fallback due — see `due`.
+    cx.timer.every(1000, (cx) => this.checkNew(cx));
   }
 
   checkNew(cx) {
