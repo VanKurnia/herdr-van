@@ -48,9 +48,7 @@ export default class Spaces {
     this.folded = new Set(JSON.parse(localStorage.getItem("machines.folded") ?? "[]"));
     this.refreshMachines(cx);
     cx.timer.every(15000, cx => this.refreshMachines(cx));
-    // The rest of the list is event-driven (render re-runs on every data change); this tick
-    // only notices a new space, a space that moved, a finished turn, a machine that came
-    // back, and the fallback due — see `due`.
+    // Whatever `due` waits for needs no faster tick than this; the rest is event-driven.
     cx.timer.every(1000, (cx) => this.checkNew(cx));
   }
 
@@ -65,7 +63,8 @@ export default class Spaces {
 
   // Places whose git could have changed: new ones (a new space, a cd), where a
   // command or an agent's turn just ended (a checkout, a commit, edits), those on
-  // a machine that is back, and repos in view whose fallback is due.
+  // a machine that is back, repos a watcher saw settle, and repos in view whose
+  // fallback is due.
   due(now, sp, ps) {
     // Moved there: what it knew of that place may be old.
     const at = {};

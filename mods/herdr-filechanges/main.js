@@ -270,8 +270,8 @@ export default class HerdrFileChanges extends View {
 
   /**
    * Every source's files as one list, each row remembering the session it came from.
-   * `sync` replaces both inputs wholesale, so their identity is the cache key: one render
-   * asks for this list several times (counts, the open file, the diff rows).
+   * `sync` replaces both inputs wholesale, so their identity is the cache key: a sync and
+   * its render ask for this list several times (counts, the open file, the diff rows).
    */
   mergedFiles() {
     const last = this.merged;

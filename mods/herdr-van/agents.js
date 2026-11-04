@@ -310,11 +310,9 @@ export default class Agents {
     // A row reads "space \u00b7 detail": the detail is a tab someone named or the
     // agent's own title, never an automatic tab number unless two rows would
     // otherwise read the same.
-    const leads = new Map(tabs.map((tab) => [tab.id, lead(panesByTab.get(tab.id) ?? [])]));
-    const label = (a) => {
-      const tab = tabs.find((tab) => tab.id === a.tab);
-      return tab ? title(tab, leads.get(tab.id)) : a.title || a.program?.name || "";
-    };
+    // A tab's title, once: `title` needs the tab's lead pane, and both are per tab.
+    const titles = new Map(tabs.map((tab) => [tab.id, title(tab, lead(panesByTab.get(tab.id) ?? []))]));
+    const label = (a) => (titles.has(a.tab) ? titles.get(a.tab) : a.title || a.program?.name || "");
     const labels = new Map(list.map((a) => [a.address, label(a)]));
     const detail = new Map(list.map((a) => [a.address, /^\d+$/.test(labels.get(a.address)) ? null : labels.get(a.address)]));
     const seen = {};
