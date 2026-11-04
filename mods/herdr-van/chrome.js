@@ -13,7 +13,12 @@ export default class Chrome {
   init(_props, cx) {
     // Nothing can be waiting for a prefix key at start: a crash mid-prefix
     // leaves the flag set, and the badge would stay lit forever.
-    if (props()?.part === "footer" && shared("prefix.armed")) setShared("prefix.armed", false);
+    if (props()?.part === "footer") {
+      if (shared("prefix.armed")) setShared("prefix.armed", false);
+      return;
+    }
+    // The brand is the only part that shows the name, so `whoami`, the config watcher and
+    // the symlink probe belong to that copy — one layout block, not two.
     this.brandUser = null; // null = resolving (shows fallback), or unresolvable
     this.brandFixed = "";
     cx.spawn(async (cx) => {
