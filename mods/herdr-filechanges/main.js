@@ -6,8 +6,15 @@ import { appHome, home, agents, focused, panes, props, closeOverlay, readTextFil
 // files it edited since the last accept (baselines from the session entries),
 // which is a different set from this app's git-based `changes` panel.
 const DATA = () => `${appHome()}/data/herdr-filechanges`;
-// Pi writes its own terminal address (HC_TERMINAL_ID); remote ones carry a `machine/` prefix.
-const snapshotPath = (address) => `${DATA()}/${address.slice(address.lastIndexOf("/") + 1)}.json`;
+// Pi writes its own terminal address (HC_TERMINAL_ID). A remote address carries
+// `machine/address`: the file name is its last segment, and the read happens on
+// that machine (`{ on }`); a local address has no machine prefix.
+/** `vps/t7` -> { on: "vps", name: "t7" }; an address with no machine is `on: null`. */
+const splitAddress = (address) => {
+  const at = address.lastIndexOf("/");
+  return at < 0 ? { on: null, name: address } : { on: address.slice(0, at), name: address.slice(at + 1) };
+};
+const snapshotPath = (name) => `${DATA()}/${name}.json`;
 const icon = (name) => `mods/herdr-filechanges/icons/${name}.svg`;
 // The pane header (mods/herdr-van/pane.js) names the pi this panel shows, so the panel
 // itself carries no footer. Keyed by tab: a mod pane has no props a header can read.
@@ -201,7 +208,8 @@ export default class HerdrFileChanges extends View {
         cx.notify();
       }
     });
-    cx.timer.every(5000, (cx) => { if (!this.watching) this.sync(cx); });
+    // The local snapshot folder is watched; a remote one cannot be, so its panel polls.
+    cx.timer.every(5000, (cx) => { if (!this.watching || this.sources.some((s) => splitAddress(s).on)) this.sync(cx); });
   }
 
   // A split pinned to a terminal belongs to it: when that terminal's pane goes away, so
@@ -242,7 +250,8 @@ export default class HerdrFileChanges extends View {
       for (const source of sources) {
         // pi replaces its snapshot by rename, so a read can land mid-swap, and a session
         // may never have written one: neither may blank a list the person is reading.
-        const text = await readTextFile(snapshotPath(source)).catch(() => null);
+        const { on, name } = splitAddress(source);
+        const text = await readTextFile(snapshotPath(name), { on }).catch(() => null);
         let fresh = null;
         try { if (text !== null) fresh = JSON.parse(text); } catch { fresh = null; }
         snapshots[source] = fresh ?? this.snapshots[source] ?? null;
@@ -280,9 +289,10 @@ export default class HerdrFileChanges extends View {
     const absolute = file.path.charAt(0) === "/" || file.path.charAt(1) === ":";
     const cwd = this.snapshots[file.owner]?.cwd ?? "";
     const path = absolute ? file.path : (cwd + "/" + file.path).replace(/\\/g, "/");
+    const on = splitAddress(file.owner).on;
     this.fileText = { path: file.path, text: null, reading: true };
     cx.spawn(async (cx) => {
-      const text = await readTextFile(path).catch(() => null);
+      const text = await readTextFile(path, { on }).catch(() => null);
       if (this.fileText?.path !== file.path) return;
       this.fileText = { path: file.path, text: text === null ? null : text.slice(0, 400_000), reading: false };
       this.refresh(cx);
