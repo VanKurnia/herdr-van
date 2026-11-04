@@ -1,6 +1,6 @@
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, v_resizable, resizable_panel, Editor, EditorState } from "gpui-base";
-import { appHome, home, agents, focused, panes, props, closeOverlay, exec, notify, readTextFile, run, shared, setShared, terminals, theme, settings, watchFolder } from "herdr";
+import { appHome, home, agents, focused, panes, props, closeOverlay, readTextFile, run, shared, setShared, terminals, theme, settings, watchFolder } from "herdr";
 
 // The snapshot the `herdr-filechanges` pi extension writes: pi's own log of the
 // files it edited since the last accept (baselines from the session entries),
@@ -9,6 +9,9 @@ const DATA = () => `${appHome()}/data/herdr-filechanges`;
 // Pi writes its own terminal address (HC_TERMINAL_ID); remote ones carry a `machine/` prefix.
 const snapshotPath = (address) => `${DATA()}/${address.slice(address.lastIndexOf("/") + 1)}.json`;
 const icon = (name) => `mods/herdr-filechanges/icons/${name}.svg`;
+// The pane header (mods/herdr-van/pane.js) names the pi this panel shows, so the panel
+// itself carries no footer. Keyed by tab: a mod pane has no props a header can read.
+const PANELS = "herdr-filechanges.panels";
 // Paths outside the pi's folder arrive absolute; the home prefix is noise in a narrow pane.
 const shortPath = (path) => {
   const h = home().replace(/\\/g, "/").replace(/\/$/, "");
@@ -169,6 +172,7 @@ export default class HerdrFileChanges extends View {
     this.snapshots = {};    // address -> snapshot, for every source that published
     this.open = null;
     this.mode = "diff";      // "diff" (what changed) or "file" (the whole file, highlighted)
+    this.codeShut = true;     // the Code section opens shut; nothing is read or parsed until asked
     this.view = shared("herdr-filechanges.view") === "flat" ? "flat" : "tree";
     this.wrap = shared("herdr-filechanges.wrap") !== "off";  // soft-wrap long lines, both modes
     this.collapsed = new Set();  // folder paths the person folded away
@@ -177,11 +181,8 @@ export default class HerdrFileChanges extends View {
     this.rows = [];
     this.rowsKey = null;
     this.fileText = null;    // { path, text } for "file" mode
-    this.note = null;
-    this.onPane = false;     // the pointer is over this pane, so its actions are shown
-    this.busy = false;
-    this.action = null;      // the command in flight, so only its own button says so
     this.watching = false;
+    this.publishedTab = null;  // the tab whose header names the pi this panel shows
     this.handle = cx.focus_handle();
     this.watchHost(cx);
     this.sync(cx);
@@ -231,10 +232,11 @@ export default class HerdrFileChanges extends View {
       this.snapshots = {};
       this.open = null;
       this.fileText = null;
-      this.note = null;
     }
+    const sources = address ? withSubagents(address) : [];
+    // The header names the pi without waiting for a snapshot: it needs no file data.
+    this.publish(address, sources.length);
     if (!address) return;
-    const sources = withSubagents(address);
     cx.spawn(async (cx) => {
       const snapshots = {};
       for (const source of sources) {
@@ -255,15 +257,14 @@ export default class HerdrFileChanges extends View {
     });
   }
 
-  /** Every source's files as one list, each row remembering which sessions own it. */
+  /** Every source's files as one list, each row remembering the session it came from. */
   mergedFiles() {
     const seen = new Map();
     for (const source of this.sources) {
       for (const file of this.snapshots[source]?.files ?? []) {
-        const known = seen.get(file.path);
-        // One path touched by two sessions is one row, but accepting must reach both.
-        if (known) { known.owners.push(source); continue; }
-        seen.set(file.path, { ...file, owners: [source] });
+        // One path touched by two sessions is one row: the pi itself comes first, so its own
+        // report wins, and its cwd is the one a relative path resolves against.
+        if (!seen.has(file.path)) seen.set(file.path, { ...file, owner: source });
       }
     }
     return [...seen.values()];
@@ -275,9 +276,9 @@ export default class HerdrFileChanges extends View {
 
   /** The current file, for "file" mode: pi's absolute path is readable in the home folder. */
   loadFile(file, cx) {
-    if (!file || (this.fileText && this.fileText.path === file.path)) return;
+    if (this.codeShut || !file || (this.fileText && this.fileText.path === file.path)) return;
     const absolute = file.path.charAt(0) === "/" || file.path.charAt(1) === ":";
-    const cwd = this.snapshots[file.owners[0]]?.cwd ?? "";
+    const cwd = this.snapshots[file.owner]?.cwd ?? "";
     const path = absolute ? file.path : (cwd + "/" + file.path).replace(/\\/g, "/");
     this.fileText = { path: file.path, text: null };
     cx.spawn(async (cx) => {
@@ -288,9 +289,27 @@ export default class HerdrFileChanges extends View {
     });
   }
 
+  /**
+   * The panel names its pi in the pane header instead of a footer of its own. The header
+   * knows only its own pane's tab, and a mod pane carries no props, so this publishes the
+   * address per tab — found the same way `watchHost` finds the tab it serves.
+   */
+  publish(address, sources) {
+    const tab = panes().find((p) => p.terminal === address)?.tab;
+    if (tab) this.publishedTab = tab;
+    if (!this.publishedTab) return;
+    const cur = shared(PANELS)?.[this.publishedTab] ?? null;
+    const next = address ? { address, sources } : null;
+    // Only a change: setShared repaints every mod that reads shared state.
+    if (cur?.address === next?.address && cur?.sources === next?.sources) return;
+    const entries = { ...(shared(PANELS) ?? {}) };
+    if (next) entries[this.publishedTab] = next;
+    else delete entries[this.publishedTab];
+    setShared(PANELS, entries);
+  }
+
   pick(path, cx) {
     this.open = this.open === path ? null : path;
-    this.note = null;
     if (this.mode === "file") this.loadFile(this.file(), cx);
     this.refresh(cx);
   }
@@ -324,54 +343,62 @@ export default class HerdrFileChanges extends View {
     this.refresh(cx);
   }
 
-  /** Rebuild what the current mode and file imply, then repaint. */
+  /** Rebuild what the current mode and file imply, then repaint. While the Code section is
+   *  shut, `ensureEditor` and `ensureRows` build nothing, so a lightweight view stays so. */
   refresh(cx) {
     this.ensureEditor();
     this.ensureRows();
     cx.notify();
   }
 
+  /** The Code section's toggle. Shutting frees the file text; the editor and the diff rows
+   *  are the ensure* functions' own to drop. Opening reads a file only if the mode needs it. */
+  toggleCode(cx) {
+    this.codeShut = !this.codeShut;
+    if (this.codeShut) this.fileText = null;
+    else if (this.mode === "file") this.loadFile(this.file(), cx);
+    this.refresh(cx);
+  }
+
   /**
-   * One editor per (mode, file, revision): the shell keeps the language and its parse,
-   * so a new state is only built when one of those actually changes. Never called from
-   * render — the shell forbids creating state there — only from init, events and tasks.
+   * One editor per file and revision: the shell keeps the language and its parse, so a new
+   * state is built only when the file or its snapshot changes. Never called from render —
+   * the shell forbids creating state there — only from init, events and tasks.
    */
   ensureEditor() {
-    if (this.mode !== "file") {
-      if (this.editor && this.editor.release) this.editor.release();
-      this.editor = null;
-      this.editorKey = null;
-      return;
-    }
     const file = this.file();
-    const text = !file ? "" : this.fileText && this.fileText.path === file.path ? this.fileText.text : null;
-    const path = file ? file.path : "";
-    const revision = file ? file.updatedAt : 0;
-    const key = this.mode + "|" + path + "|" + revision + "|" + (text === null ? "none" : "text");
-    if (this.editorKey === key) return;
-    if (text === null) {
-      // "file" mode before the text arrives: nothing to draw yet.
+    const text = !file ? "" : this.fileText?.path === file.path ? this.fileText.text : null;
+    const drop = () => {
+      if (this.editor?.release) this.editor.release();
       this.editor = null;
       this.editorKey = null;
-      return;
-    }
-    if (this.editor && this.editor.release) this.editor.release();
-    const t = theme();
+    };
+    // Shut, not in "file" mode, or no text yet: the shell's parse is the cost, so nothing
+    // is built or kept.
+    if (this.codeShut || this.mode !== "file" || text === null) return drop();
+    const key = `${file?.path ?? ""}|${file?.updatedAt ?? 0}`;
+    if (this.editorKey === key) return;
+    drop();
     this.editor = EditorState.new({
       language: languageOf(file ? file.path : ""),
-      value: text ?? "",
+      value: text,
       readonly: true,
       folding: false,
       line_numbers: true,
       soft_wrap: this.wrap,
       font_family: settings().font_family ?? "JetBrains Mono",
       font_size: 11,
-      syntax: SYNTAX(t),
+      syntax: SYNTAX(theme()),
     });
     this.editorKey = key;
   }
 
   ensureRows() {
+    if (this.codeShut) {
+      this.rows = [];
+      this.rowsKey = null;
+      return;
+    }
     const file = this.file();
     const key = file ? `${file.path}|${file.updatedAt}|${this.mode}` : "";
     if (this.rowsKey === key) return;
@@ -385,36 +412,6 @@ export default class HerdrFileChanges extends View {
       const spans = tokenize(row.text, language);
       return { ...row, boxes: this.wrap ? wrapWords(spans) : spans };
     });
-  }
-
-  command(command, cx) {
-    if (!this.address || this.busy) return;
-    // Every session shown here, not just the pi: a sub-agent baselines its own files, so
-    // leaving it out would leave its rows listed after the person accepted them.
-    const targets = [...new Set(this.mergedFiles().flatMap((f) => f.owners))];
-    if (!targets.length) return;
-    this.busy = true;
-    this.action = command;
-    this.note = null;
-    cx.spawn(async (cx) => {
-      const failed = [];
-      try {
-        for (const address of targets) {
-          // The extension's own command; `force` because a mod can never answer its confirm prompt.
-          const r = await exec("hc", ["send", address, `/${command} force`])
-            .catch((e) => ({ code: -1, stdout: "", stderr: String(e) }));
-          if (r.code !== 0) failed.push(`${address}: ${(r.stderr || r.stdout).trim()}`);
-        }
-        if (failed.length) this.note = `Failed: ${failed.join("; ")}`;
-        else notify({ title: command === "filechanges-accept" ? "pi changes accepted" : "pi changes reverted", body: targets.join(", "), level: "success" });
-      } finally {
-        this.busy = false;
-        this.action = null;
-        this.sync(cx);
-        cx.notify();
-      }
-    });
-    cx.notify();
   }
 
   // Indent guides: one hairline per ancestor level, painted as the cell's left border —
@@ -503,10 +500,12 @@ export default class HerdrFileChanges extends View {
           div().flex_none().when(Boolean(syntax[box.cls]), (e) => e.text_color(syntax[box.cls])).child(box.text))));
   }
 
-  // A section's own rule: name (and count) on the left, its facts on the right.
+  // A section's own rule: name (and count) on the left, its facts on the right. The
+  // 1px rules above and below are `input` (the theme's stronger border): the header sits
+  // on `raised`, which several themes use as their `border` too, so `border` here vanishes.
   section(id, label, count, t, right) {
     return h_flex().id(id).h(22).flex_none().px(8).gap(6).items_center()
-      .bg(t.raised).text_size(10.5).text_color(t.dim)
+      .bg(t.raised).border_t(1).border_b(1).border_color(t.input).text_size(10.5).text_color(t.dim)
       .child(div().font_semibold().text_color(t.foreground).child(label))
       .when(count !== null, (e) => e.child(div().px(4).rounded(4).bg(t.background).text_size(10).text_color(t.dim).child(String(count))))
       .child(div().flex_1())
@@ -521,14 +520,6 @@ export default class HerdrFileChanges extends View {
       .child(svg(icon(glyph)).size(11).flex_none());
   }
 
-  // Icon + label chip, as the sidebar's buttons are drawn.
-  button(id, label, glyph, tones, enabled, on) {
-    return h_flex().id(id).h(26).flex_none().px(9).gap(5).items_center().rounded(6).text_size(11.5)
-      .bg(tones.bg).text_color(tones.text).when(enabled, (e) => e.cursor_pointer().hover((s) => s.bg(tones.hover).text_color(tones.hoverText)))
-      .on_click(on)
-      .child(svg(icon(glyph)).size(12).flex_none()).child(label);
-  }
-
   render(cx) {
     if (piTerminal() !== this.address) this.sync(cx);
     const t = theme();
@@ -536,15 +527,9 @@ export default class HerdrFileChanges extends View {
     const add = files.reduce((n, f) => n + f.added, 0);
     const rem = files.reduce((n, f) => n + f.removed, 0);
     const file = this.file();
-    const enabled = Boolean(this.address && files.length && !this.busy);
 
     // The editor is built in an event handler or task (render may not create state); read it here.
     const editor = this.editor;
-    // Pointer-in-pane tracking, attached to the elements that cover the pane: a mouse
-    // move arrives only while hovering, and the hover exit clears it again.
-    const inPane = (el) => el
-      .on_mouse_move((_e, cx) => { if (!this.onPane) { this.onPane = true; cx.notify(); } })
-      .on_hover((on, cx) => { if (!on && this.onPane) { this.onPane = false; cx.notify(); } });
     const pending = this.mode === "file" && Boolean(file) && (!this.fileText || this.fileText.path !== file.path);
     // Nothing to draw: no rows yet in diff mode, no editor yet in file mode.
     const empty = this.mode === "diff" ? this.rows.length === 0 : !editor;
@@ -557,68 +542,72 @@ export default class HerdrFileChanges extends View {
         : "No pi changes recorded";
     const hint = !this.address || anySnapshot ? null : "restart pi there, or /reload";
 
+    // The File list, the Code header and the Code body are described once and placed by the
+    // layout branch below, so shut and open share them.
+    const filesPanel = v_flex().id("files").size_full().min_h(0)
+      .child(this.section("files-head", "File", files.length, t, h_flex().min_w(0).gap(5)
+        .when(add > 0, (e) => e.child(div().text_size(10.5).text_color(t.ansi2).child(`+${add}`)))
+        .when(rem > 0, (e) => e.child(div().text_size(10.5).text_color(t.ansi1).child(`−${rem}`)))
+        .child(this.iconChip("file-view-flat", "list", t, this.view === "flat", (_e, cx) => { this.setView("flat", cx); }))
+        .child(this.iconChip("file-view-tree", "folder-tree", t, this.view === "tree", (_e, cx) => { this.setView("tree", cx); }))
+        // Not a feature: mod.open opens this mod as the overlay its mod.json describes —
+        // content-sized, clipped, with no close of its own. This is the way out.
+        .when(Boolean(props()?.overlay), (e) => e.child(div().id("pi-close").w(16).h(16).flex_none().ml(2)
+          .flex().items_center().justify_center().rounded(4).cursor_pointer().text_color(t.dim)
+          .hover((s) => s.bg(t.hover).text_color(t.foreground))
+          .on_click(() => closeOverlay(props().overlay)).child(svg(icon("x")).size(10))))))
+      .child(v_flex().id("files-body").flex_1().min_h(0).overflow_y_scrollbar().p(4)
+        .children(this.view === "tree" ? this.treeRows(files, t) : files.map((f) => this.fileRow(f, t)))
+        .when(!files.length, (e) => e.child(h_flex().h(26).px(6).gap(7).items_center().text_size(12).text_color(t.dim)
+          .child(svg(icon("clock")).size(13).flex_none())
+          .child(v_flex().gap(1).child(div().child(headline))
+            .when(Boolean(hint), (x) => x.child(div().text_size(11).text_color(t.dim).child(hint)))))));
+
+    // Shut, the header keeps only its toggle: the mode chips would act on a body that is not
+    // there, and the file label would describe something not yet read.
+    const codeHead = this.section("code-head", "Code", null, t, h_flex().min_w(0).gap(5)
+      .when(!this.codeShut, (e) => e
+        .when(Boolean(file), (x) => {
+          const kind = kindOf(file);
+          return x.child(div().font_semibold().text_color(t[kind.color] ?? t.accent).child(kind.label));
+        })
+        .when(Boolean(file?.truncated), (x) => x.child(div().child("truncated")))
+        .when(!file, (x) => x.child(div().child(files.length ? "no file selected" : "")))
+        .child(this.iconChip("mode-wrap", "wrap-text", t, this.wrap, (_e, cx) => { this.setWrap(!this.wrap, cx); }))
+        .child(this.iconChip("mode-diff", "diff", t, this.mode === "diff", (_e, cx) => { this.setMode("diff", cx); }))
+        .child(this.iconChip("mode-file", "code", t, this.mode === "file", (_e, cx) => { this.setMode("file", cx); }))
+        .child(this.iconChip("code-shut", "chevron-down", t, true, (_e, cx) => { this.toggleCode(cx); })))
+      // Shut the glyph is decoration and the whole bar is the control: two handlers on one
+      // click would both fire (the click bubbles) and toggle the section twice, leaving it shut.
+      .when(this.codeShut, (e) => e.child(div().w(18).h(16).flex_none().flex().items_center().justify_center()
+        .text_color(t.dim).child(svg(icon("chevron-right")).size(11).flex_none()))))
+      .when(this.codeShut, (e) => e.cursor_pointer().on_click((_e, cx) => { this.toggleCode(cx); }));
+
+    const codeBody = div().flex_1().min_h(0)
+      .when(this.mode === "diff" && this.rows.length > 0, (e) =>
+        e.child(v_flex().id("pi-diff").size_full().min_h(0).overflow_y_scrollbar()
+          .children(this.rows.map((row) => this.diffRow(row, t)))))
+      .when(this.mode === "file" && Boolean(editor), (e) => e.child(Editor.new(editor)))
+      .when(empty, (e) => e.child(div().p(8).text_size(11).text_color(t.dim)
+        .child(pending ? "Reading the file…" : "Select a file to see its changes")));
+
+    // Shut: the File list takes the pane and the Code bar sits at its foot. Open: the shell's
+    // splitter, half each — neither panel names a size, so expanding Code takes half the pane.
+    // The window keys a split's remembered sizes by id, so a new id is how a changed default
+    // reaches a pane that already split.
+    const paneBody = this.codeShut
+      ? v_flex().id("pi-changes-shut").flex_1().min_h(0)
+        .child(div().flex_1().min_h(0).child(filesPanel))
+        .child(codeHead)
+      : v_resizable("pi-changes-split-half").flex_1().min_h(0)
+        .child(resizable_panel().size_range(88, 900).child(filesPanel))
+        .child(resizable_panel().size_range(120)
+          .child(v_flex().id("code").size_full().min_h(0).child(codeHead).child(codeBody)));
     // 0.8 alpha: the window's background reads faintly through the body, rows stay legible.
+    // No footer: accepting and reverting are pi's own `/accept-changes` and
+    // `/decline-changes`, and the header names the pi these changes belong to.
     return v_flex().id("herdr-filechanges").size_full().min_h(0).overflow_hidden()
       .bg(t.background + "cc").text_color(t.foreground).track_focus(this.handle)
-      // "The pointer is in this pane": a mouse move is delivered only while hovering, and
-      // the hover exit clears it, so the footer's actions are here while the person is.
-      // It rides on these two wrappers rather than the root — a handler on a pane mod's
-      // root never fires — and together they cover every pixel of the pane.
-      .child(inPane(v_flex().id("pi-changes-body").flex_1().min_h(0))
-      // The shell's own splitter: drag the divider, sizes live in the window and survive repaints.
-        .child(v_resizable("pi-changes-split").flex_1().min_h(0)
-        .child(resizable_panel().size(200).size_range(88, 900)
-          .child(v_flex().id("files").size_full().min_h(0)
-            .child(this.section("files-head", "File", files.length, t, h_flex().min_w(0).gap(5)
-              .when(add > 0, (e) => e.child(div().text_size(10.5).text_color(t.ansi2).child(`+${add}`)))
-              .when(rem > 0, (e) => e.child(div().text_size(10.5).text_color(t.ansi1).child(`−${rem}`)))
-              .child(this.iconChip("file-view-flat", "list", t, this.view === "flat", (_e, cx) => { this.setView("flat", cx); }))
-              .child(this.iconChip("file-view-tree", "folder-tree", t, this.view === "tree", (_e, cx) => { this.setView("tree", cx); }))
-              // Not a feature: mod.open opens this mod as the overlay its mod.json describes —
-              // content-sized, clipped, with no close of its own. This is the way out.
-              .when(Boolean(props()?.overlay), (e) => e.child(div().id("pi-close").w(16).h(16).flex_none().ml(2)
-                .flex().items_center().justify_center().rounded(4).cursor_pointer().text_color(t.dim)
-                .hover((s) => s.bg(t.hover).text_color(t.foreground))
-                .on_click(() => closeOverlay(props().overlay)).child(svg(icon("x")).size(10))))))
-            .child(v_flex().id("files-body").flex_1().min_h(0).overflow_y_scrollbar().p(4)
-              .children(this.view === "tree" ? this.treeRows(files, t) : files.map((f) => this.fileRow(f, t)))
-              .when(!files.length, (e) => e.child(h_flex().h(26).px(6).gap(7).items_center().text_size(12).text_color(t.dim)
-                .child(svg(icon("clock")).size(13).flex_none())
-                .child(v_flex().gap(1).child(div().child(headline))
-                  .when(Boolean(hint), (x) => x.child(div().text_size(11).text_color(t.dim).child(hint)))))))))
-        .child(resizable_panel()
-          .child(v_flex().id("code").size_full().min_h(0)
-            .child(this.section("code-head", "Code", null, t, h_flex().min_w(0).gap(5)
-              .when(Boolean(file), (e) => {
-                const kind = kindOf(file);
-                return e.child(div().font_semibold().text_color(t[kind.color] ?? t.accent).child(kind.label));
-              })
-              .when(Boolean(file?.truncated), (x) => x.child(div().child("truncated")))
-              .when(!file, (e) => e.child(div().child(files.length ? "no file selected" : "")))
-              .child(this.iconChip("mode-wrap", "wrap-text", t, this.wrap, (_e, cx) => { this.setWrap(!this.wrap, cx); }))
-              .child(this.iconChip("mode-diff", "diff", t, this.mode === "diff", (_e, cx) => { this.setMode("diff", cx); }))
-              .child(this.iconChip("mode-file", "code", t, this.mode === "file", (_e, cx) => { this.setMode("file", cx); }))))
-            .child(div().flex_1().min_h(0)
-              .when(this.mode === "diff" && this.rows.length > 0, (e) =>
-                e.child(v_flex().id("pi-diff").size_full().min_h(0).overflow_y_scrollbar()
-                  .children(this.rows.map((row) => this.diffRow(row, t)))))
-              .when(this.mode === "file" && Boolean(editor), (e) => e.child(Editor.new(editor)))
-              .when(empty, (e) => e.child(div().p(8).text_size(11).text_color(t.dim)
-                .child(pending ? "Reading the file…" : "Select a file to see its changes"))))))))
-      .when(Boolean(this.note), (e) => e.child(div().px(8).pb(6).text_size(11).text_color(t.ansi1).child(this.note)))
-      // The actions are hover-only. The row keeps a fixed height (26px buttons + 12px of
-      // padding) so the diff above it never resizes as the pointer comes and goes.
-      .child(inPane(h_flex().id("pi-changes-actions").flex_none().h(38).px(8).gap(6).items_center().border_t(1).border_color(t.border).when(this.onPane, (e) => e
-          .child(this.button("pi-accept", this.busy && this.action === "filechanges-accept" ? "Accepting…" : "Accept", "check",
-            // Primary: the accent fill with its ink. `solid`/`solid_foreground` are the theme's own
-            // primary pair, but a theme may leave them undefined, which falls back to ink-on-paper.
-            { bg: enabled ? t.accent : t.raised, text: enabled ? t.accent_foreground : t.dim, hover: t.ansi12, hoverText: t.accent_foreground },
-            enabled, (_e, cx) => this.command("filechanges-accept", cx)))
-          .child(this.button("pi-revert", this.busy && this.action === "filechanges-decline" ? "Reverting…" : "Revert", "x",
-            { bg: t.raised, text: enabled ? t.ansi1 : t.dim, hover: t.ansi1 + "22", hoverText: t.ansi9 },
-            enabled, (_e, cx) => this.command("filechanges-decline", cx))))
-        .child(div().flex_1())
-        .when(Boolean(this.address), (e) => e.child(div().text_size(10.5).text_color(t.dim)
-          .child(this.sources.length > 1 ? `${this.address} +${this.sources.length - 1}` : this.address)))));
+      .child(v_flex().id("pi-changes-body").flex_1().min_h(0).child(paneBody));
   }
 }

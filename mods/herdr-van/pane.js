@@ -7,7 +7,7 @@
 
 import { View, div, svg, image } from "gpui-kit";
 import { h_flex } from "gpui-base";
-import { panes, run, theme, home } from "herdr";
+import { panes, run, theme, home, shared } from "herdr";
 
 function icon(p, size, color) {
   if (!p?.icon) return null;
@@ -91,6 +91,9 @@ export default class Pane {
     if (!p) return div();
     const openPanel = isPi(p) ? this.panel(p.tab) : null;
     const modPane = p.mod === PANEL.mod;
+    // Whose changes the panel shows: it publishes that per tab (mods/herdr-filechanges),
+    // because a mod pane carries no props a header could read. Muted, next to the name.
+    const watched = modPane ? shared("herdr-filechanges.panels")?.[p.tab] ?? null : null;
     const name = modPane
       ? PANEL.label
       : ((p.program?.agent || p.program?.shell) && p.program.name) || p.title || p.program?.name || "shell";
@@ -114,6 +117,8 @@ export default class Pane {
       .on_click(() => run("pane.focus", { pane }))
       .when(Boolean(pic), (el) => el.child(pic))
       .child(div().flex_none().truncate().max_w(260).font_medium().text_color(t.foreground).child(name))
+      .when(Boolean(watched), (el) => el.child(div().flex_none().text_size(10.5).text_color(t.dim)
+        .child(watched.sources > 1 ? `${watched.address} +${watched.sources - 1}` : watched.address)))
       .child(div().flex_1().truncate().text_color(t.dim).child(folder(p.cwd)))
       .when(st === "working", (el) => el.child(svg("mods/herdr-van/icons/spinner.svg").size(12).flex_none().text_color(t.working).spin(900)))
       .when(st === "blocked", (el) => el.child(div().flex_none().px(6).h(18).flex().items_center().rounded(5).bg(t.blocked + "26").text_size(10.5).font_semibold().text_color(t.blocked).child("Needs you")))
