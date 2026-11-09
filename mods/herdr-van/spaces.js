@@ -5,8 +5,9 @@
 
 import { div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { spaces, machines, panes, run, openOverlay, exec, hc, theme, shared, setShared, watchFolder, window } from "herdr";
+import { spaces, machines, panes, run, openOverlay, exec, hc, theme, shared, setShared, watchFolder, window, notify } from "herdr";
 import { claimSidebarHover, narrow, onSidebar } from "./lib.js";
+import { readDoc, snapshotDoc, saveSpace, saveAuto, signature, list, writeList, MODE, dropRecord, openWorkspace } from "./workspace.js";
 
 // Where a space is now: its first terminal's live folder, else where it was made.
 // `ps`: panes(), read once by the caller (each read copies every pane).
@@ -42,8 +43,13 @@ export default class Spaces {
     // worktree appears under its repo instead of jumping there.
     this.shown = new Set(spaces().map((s) => s.id));
     this.born = {};
+    this.snap = {}; // spaceId -> snapshot, live ones only
+    this.docSig = null; // signature the snapshots were built from
+    this.docReading = false; // single-flight
+    this.closedByUs = new Set(); // spaces we closed on purpose
     this.pressed = null;
     this.over = null;
+    this.hoverRow = null;
     this.machines = [];
     this.folded = new Set(JSON.parse(localStorage.getItem("machines.folded") ?? "[]"));
     this.refreshMachines(cx);
@@ -55,10 +61,57 @@ export default class Spaces {
   checkNew(cx) {
     const now = Date.now();
     const sp = spaces();
+    const ps = panes();
     for (const s of sp) if (!this.shown.has(s.id)) this.born[s.id] ??= now;
-    const due = this.due(now, sp, panes());
+    this.capture(cx, sp, ps);
+    const due = this.due(now, sp, ps);
     if (due.size) this.refreshGit(due, cx);
     if (sp.some((s) => !this.shown.has(s.id))) cx.notify();
+  }
+
+  // Structure changed (a space, tab or pane appeared, moved or was renamed):
+  // re-read the core document once, single-flight, and remember every live
+  // space's shape. The last known shape is how a space that closes is saved.
+  // `sp`/`ps` are the arrays checkNew already read this tick — pass them in,
+  // never re-read them here.
+  capture(cx, sp, ps) {
+    const gone = Object.entries(this.snap).filter(([id]) => !sp.some(s => s.id === id));
+    if (gone.length) this.captureGone(gone);
+    const sig = signature(sp, ps);
+    if (sig === this.docSig || this.docReading) return;
+    this.docReading = true;
+    cx.spawn(async () => {
+      const doc = await readDoc();
+      this.docReading = false;
+      // A failed read must not be remembered as "already seen", or capture
+      // freezes until the structure changes again.
+      if (!doc) { this.docSig = null; return; }
+      this.docSig = sig;
+      this.snap = snapshotDoc(doc);
+      // No cx.notify(): nothing renders this.snap, and the setShared
+      // writes in captureGone re-render every part by themselves.
+    });
+  }
+
+  // A space left the list (closed here or on another client). Three cases, in
+  // order: we closed it as an unload (forget it); it was a workspace we had
+  // opened (clear its `live`, keep its shape); anything else (keep it as an
+  // automatic workspace).
+  captureGone(gone) {
+    const records = list().records;
+    const reopen = [];
+    const auto = [];
+    for (const [id, snap] of gone) {
+      delete this.snap[id];
+      if (this.closedByUs.delete(id)) continue;
+      const rec = records.find(r => r.live === id);
+      if (rec) reopen.push({ ...rec, live: null, tabs: snap.tabs, saved_at: Date.now() });
+      else auto.push(snap);
+    }
+    if (reopen.length) {
+      writeList({ v: 1, records: records.map(r => reopen.find(k => k.id === r.id) ?? r) });
+    }
+    if (auto.length) saveAuto(auto);
   }
 
   // Places whose git could have changed: new ones (a new space, a cd), where a
@@ -317,6 +370,7 @@ export default class Spaces {
         cx.notify();
       })
       .on_mouse_down("right", () => this.menu(w))
+      .on_hover((on, cx) => this.setHover(`space-${w.id}`, on, cx))
       .child(
         h_flex()
           .gap(9)
@@ -324,7 +378,22 @@ export default class Spaces {
           .when(Boolean(tree), el => el.pl(22).child(svg("mods/herdr-van/icons/branch.svg").size(13).text_color(t.dim)))
           .when(!tree, el => el.child(h_flex().size(18).flex_none().rounded(5).bg(fill).items_center().justify_center().text_size(10.5).font_bold().text_color("#ffffff").child([...w.name][0]?.toUpperCase() ?? "?")))
           .child(div().flex_shrink(0).max_w(150).truncate().text_color(t.foreground).child(w.name))
-          .child(g ? this.gitTail(g, tree, w.name, t) : div().flex_1()),
+          .child(g ? this.gitTail(g, tree, w.name, t) : div().flex_1())
+          .when(this.hoverRow === `space-${w.id}`, el => el.child(
+            h_flex().gap(2).items_center()
+              .child(h_flex().id(`space-save-${w.id}`).size(18).flex_none().rounded(4).items_center().justify_center().text_color(t.dim)
+                .hover(s => s.bg(t.raised).text_color(t.foreground))
+                .tooltip("Save as workspace")
+                .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+                .on_click((_e, cx) => { cx.stop_propagation(); this.saveLive(w.id); this.clearHover(cx); })
+                .child(svg("mods/herdr-van/icons/layers.svg").size(12)))
+              .when((shared(MODE) ?? "active") === "all", row => row.child(
+                h_flex().id(`space-unload-${w.id}`).size(18).flex_none().rounded(4).items_center().justify_center().text_color(t.dim)
+                  .hover(s => s.bg(t.raised).text_color(t.foreground))
+                  .tooltip("Unload (keeps it in Saved)")
+                  .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+                  .on_click((_e, cx) => { cx.stop_propagation(); this.unload(w); this.clearHover(cx); })
+                  .child(svg("mods/herdr-van/icons/close.svg").size(12)))))),
       );
   }
 
@@ -343,6 +412,81 @@ export default class Spaces {
       .child(div().text_color(t[w.status] ?? t.unknown).child(w.status === "blocked" || w.status === "done" ? "●" : "·"));
   }
 
+  // Saved workspaces with no live space behind them: muted, below the live
+  // rows, never draggable.
+  savedRows(t, collapsed) {
+    const mode = shared(MODE) ?? "active";
+    if (mode !== "all") return [];
+    const live = new Set(spaces().map(s => s.id));
+    const recs = list().records.filter(r => !r.live || !live.has(r.live));
+    if (!recs.length) return [];
+    const head = h_flex().id("workspace-head").h(24).flex_none().px(8).items_center().text_size(10.5).text_color(t.dim)
+      .child(collapsed ? "" : "Saved");
+    const row = (r) => h_flex()
+      .id(`workspace-${r.id}`)
+      .h(30).flex_none().px(8).gap(9).items_center().rounded(8)
+      .opacity(0.55)
+      .hover(s => s.bg(t.hover))
+      .on_click((_e, cx) => openWorkspace(r, cx))
+      .child(h_flex().size(18).flex_none().rounded(5).bg(t.dim).items_center().justify_center()
+        .text_size(10.5).font_bold().text_color(t.chrome).child([...r.name][0]?.toUpperCase() ?? "?"))
+      .child(div().flex_shrink(0).max_w(150).truncate().text_color(t.muted).child(r.name))
+      .child(div().flex_1())
+      .when(!collapsed && this.hoverRow === `workspace-${r.id}`, el => el.child(
+        h_flex().id(`workspace-forget-${r.id}`).size(18).flex_none().rounded(4).items_center().justify_center().text_color(t.dim)
+          .hover(s => s.bg(t.raised).text_color(t.foreground))
+          .tooltip("Forget this workspace")
+          .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+          .on_click((_e, cx) => { cx.stop_propagation(); dropRecord(r.id); this.clearHover(cx); })
+          .child(svg("mods/herdr-van/icons/x.svg").size(11))))
+      .on_hover((on, cx) => this.setHover(`workspace-${r.id}`, on, cx));
+    return [head, ...recs.map(row)];
+  }
+
+  // Hover ownership, same rule the agents part already uses: set on enter,
+  // clear only if the pointer left the row that currently owns the hover.
+  setHover(id, on, cx) {
+    if (on) { if (this.hoverRow === id) return; this.hoverRow = id; }
+    else { if (this.hoverRow !== id) return; this.hoverRow = null; }
+    cx.notify();
+  }
+
+  // After an action the row can move away from under the pointer and no
+  // hover-out arrives (the same trap the agents pin documents), so clear the
+  // hover explicitly and drop the drag state the row's mouse-down set.
+  clearHover(cx) {
+    this.hoverRow = null;
+    this.pressed = null;
+    this.over = null;
+    cx.notify();
+  }
+
+  saveLive(spaceId) {
+    const w = spaces().find(s => s.id === spaceId);
+    saveSpace(spaceId).then((r) => {
+      if (r?.error) notify({ title: "Could not save workspace", body: r.error, level: "error" });
+      else notify({ title: "Saved workspace", body: w?.name ?? "", level: "success" });
+    }).catch((e) => notify({ title: "Could not save workspace", body: String(e), level: "error" }));
+  }
+
+  // Unload: keep the workspace, end its terminals. The record is refreshed from
+  // the last captured shape before the close, and `closedByUs` stops capture
+  // from also saving it as an automatic workspace.
+  unload(w) {
+    this.closedByUs.add(w.id);
+    const close = () => {
+      const records = list().records;
+      const rec = records.find(r => r.live === w.id);
+      if (rec) {
+        const tabs = this.snap[w.id]?.tabs ?? rec.tabs;
+        writeList({ v: 1, records: records.map(r => r.id === rec.id ? { ...r, live: null, tabs, saved_at: Date.now() } : r) });
+      }
+      run("space.close", { id: w.id, confirmed: true });
+    };
+    // No captured shape yet (the space just appeared): save it, then unload.
+    if (this.snap[w.id]) close(); else saveSpace(w.id).then(close);
+  }
+
   render() {
     const t = theme();
     const collapsed = narrow();
@@ -358,15 +502,28 @@ export default class Spaces {
       changed = true;
     }
     if (changed) setShared("space.colors", kept);
-    // The pointer on the sidebar brings the + out.
-    const add = div().id("space-new").p(4).rounded(5).hover(s => s.bg(t.hover).text_color(t.foreground)).on_click(() => run("space.new")).child("+");
+    // Both header buttons are 22×22: a box sized from its label plus padding is
+    // never square, so the size comes from .size(), never from the glyph.
+    const mode = shared(MODE) ?? "active";
+    const add = h_flex().id("space-new").size(22).flex_none().rounded(5).items_center().justify_center()
+      .hover(s => s.bg(t.hover).text_color(t.foreground))
+      .tooltip("New space")
+      .on_click(() => run("space.new"))
+      .child("+");
+    const modeBtn = h_flex().id("space-mode").size(22).flex_none().rounded(5).items_center().justify_center()
+      .text_color(mode === "all" ? t.foreground : t.dim)
+      .when(mode === "all", el => el.bg(t.selected))
+      .hover(s => s.bg(t.hover).text_color(t.foreground))
+      .tooltip(mode === "all" ? "Showing saved workspaces" : "Showing open spaces")
+      .on_click(() => setShared(MODE, mode === "all" ? "active" : "all"))
+      .child(svg("mods/herdr-van/icons/layers.svg").size(13));
     return v_flex().id("sidebar-spaces").size_full().min_h(0).text_size(13)
       .on_hover(claimSidebarHover("spaces"))
       .child(h_flex().h(31).pl(16).pr(10).items_center().justify_between().text_size(11.5).text_color(t.dim)
         .when(!collapsed, el => el.child("Spaces"))
-        .when(onSidebar(), el => el.child(add)))
+        .when(onSidebar(), el => el.child(h_flex().gap(4).items_center().child(modeBtn).child(add))))
       .child(v_flex().flex_1().min_h(0).px(8).pb(14).overflow_y_scrollbar().mode("always")
         .on_mouse_up("left", (_e, cx) => { this.pressed = null; this.over = null; cx.notify(); })
-        .children(this.grouped(t, collapsed)));
+        .children([...this.grouped(t, collapsed), ...this.savedRows(t, collapsed)]));
   }
 }
