@@ -1,11 +1,12 @@
-// herdr-van: one mod, six parts. The layout puts a copy of it in each block and
-// names the part with props: { part: "tabs" | "spaces" | "agents" | "brand" |
-// "footer" | "pane" }. Only that part starts, so the spaces' git polling, the
-// agents' timer and the brand's config watch never run twice.
+// herdr-van: one mod, seven parts. The layout puts a copy of it in each block
+// and names the part with props: { part: "tabs" | "spaces" | "agents" |
+// "brand" | "footer" | "pane" }. Only that part starts, so the spaces' git
+// polling, the agents' timer and the brand's config watch never run twice.
 //
 // Props are read with props(), not the init argument: the agents list also opens
 // itself as an overlay, for its sort menu ({ sortMenu: true }) and for a row's
-// options ({ agentMenu: true, address }).
+// options ({ agentMenu: true, address }), and the prefix opens the jump list the
+// same way ({ part: "jump" }).
 
 import { View } from "gpui-kit";
 import { props } from "herdr";
@@ -14,8 +15,9 @@ import Spaces from "./spaces.js";
 import Agents from "./agents.js";
 import Chrome from "./chrome.js";
 import Pane from "./pane.js";
+import Jump from "./jump.js";
 
-const PARTS = { tabs: Tabs, spaces: Spaces, agents: Agents, brand: Chrome, footer: Chrome, pane: Pane };
+const PARTS = { tabs: Tabs, spaces: Spaces, agents: Agents, brand: Chrome, footer: Chrome, pane: Pane, jump: Jump };
 
 const partName = (cfg) => (cfg?.sortMenu || cfg?.agentMenu ? "agents" : cfg?.part ?? "brand");
 

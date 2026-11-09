@@ -22,8 +22,9 @@ const WAIT = 4000;
 // The badge the footer shows is this mod's only state: true while a key is expected.
 const ARM = "prefix.armed";
 
-// Every picker row opens the same shipped popup.
-const openPicker = () => openOverlay({ mod: "picker", kind: "popup", at: "top", offset: 40, width: 640, height: 0.8 });
+// prefix+g: the herdr-van jump popup, which lists every space, its tabs and the
+// saved workspaces in one filterable list. The shipped picker keeps its own key.
+const openJump = () => openOverlay({ mod: "herdr-van", props: { part: "jump" }, kind: "popup", at: "top", offset: 40, width: 560, frame: "none" });
 
 // The sidebar button in the brand row, not Herdr's hide: narrow to the rail and
 // back to the width it had. A mod cannot import another mod's files, so this
@@ -66,7 +67,7 @@ const SECTIONS = [
     ...Array.from({ length: 9 }, (_, i) => [String(i + 1), `Tab ${i + 1}`, "tab.select", { index: i + 1 }]),
   ]],
   ["Session", [
-    ["g", "Go to an agent or terminal", openPicker],
+    ["g", "Go to a space, tab or workspace", openJump],
     ["b", "Toggle sidebar", toggleSidebar, null, "to the rail; ctrl-shift-b hides it"],
     ["s", "Settings", "app.settings"],
     ["q", "Minimize window", "window.minimize", {}, "no detach: panes keep running"],

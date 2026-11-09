@@ -6,7 +6,7 @@
 import { div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { spaces, machines, panes, run, openOverlay, exec, hc, theme, shared, setShared, watchFolder, window, notify } from "herdr";
-import { claimSidebarHover, narrow, onSidebar } from "./lib.js";
+import { claimSidebarHover, narrow, onSidebar, spaceColors, spaceFill } from "./lib.js";
 import { readDoc, snapshotDoc, saveSpace, saveAuto, signature, list, writeList, MODE, dropRecord, openWorkspace } from "./workspace.js";
 
 // Where a space is now: its first terminal's live folder, else where it was made.
@@ -23,10 +23,6 @@ const FALLBACK = 60000;
 // A watcher's burst of writes under .git (a commit, a checkout) becomes one look at git,
 // a moment after the last write rather than once per wave.
 const SETTLE = 1500;
-
-// What a stored color name looks like on an avatar (the same in every mod
-// that draws space avatars): one strong color per hue, light and dark alike.
-const MARK = { ansi6: "#22a99a", ansi3: "#e3814f", ansi4: "#5b8def", ansi5: "#8b7cf6", ansi2: "#3fae6a", ansi1: "#d9649a" };
 
 export default class Spaces {
   init(_props, cx) {
@@ -332,9 +328,7 @@ export default class Spaces {
 
   row({ w, i, g, tree }, t) {
     const on = w.active;
-    const colors = shared("space.colors") ?? {};
-    const color = colors[w.id] ?? "ansi6";
-    const fill = color.startsWith("#") ? color : (MARK[color] ?? t[color]);
+    const fill = spaceFill(t, w);
     return v_flex()
       .relative()
       .id(`space-${w.id}`)
@@ -490,18 +484,9 @@ export default class Spaces {
   render() {
     const t = theme();
     const collapsed = narrow();
-    const palette = ["ansi6", "ansi3", "ansi4", "ansi5", "ansi2", "ansi1"];
     const sp = spaces();
-    const ids = new Set(sp.map(p => p.id));
-    const kept = Object.fromEntries(Object.entries(shared("space.colors") ?? {}).filter(([id]) => ids.has(id)));
-    let changed = Object.keys(kept).length !== Object.keys(shared("space.colors") ?? {}).length;
-    for (const p of sp) {
-      if (kept[p.id] || p.name === "~") continue;
-      const uses = c => Object.values(kept).filter(v => v === c).length;
-      kept[p.id] = palette.reduce((best, c) => uses(c) < uses(best) ? c : best);
-      changed = true;
-    }
-    if (changed) setShared("space.colors", kept);
+    // Keeps shared "space.colors" in step; the rows read it through spaceFill.
+    spaceColors();
     // Both header buttons are 22×22: a box sized from its label plus padding is
     // never square, so the size comes from .size(), never from the glyph.
     const mode = shared(MODE) ?? "active";
