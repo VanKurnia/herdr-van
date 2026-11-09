@@ -6,17 +6,21 @@
 import { div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { spaces, machines, panes, run, openOverlay, exec, hc, theme, shared, setShared, watchFolder, window, notify } from "herdr";
-import { claimSidebarHover, narrow, onSidebar, spaceColors, spaceFill } from "./lib.js";
+import { claimSidebarHover, narrow, onSidebar, place, spaceColors, spaceFill, icon } from "./lib.js";
 import { readDoc, snapshotDoc, saveSpace, saveAuto, signature, list, writeList, MODE, dropRecord, openWorkspace } from "./workspace.js";
+import { procsOf, liveByAddress, syncProcs, stopProc, forgetProc, rerunProc } from "./runner.js";
 
-// Where a space is now: its first terminal's live folder, else where it was made.
-// `ps`: panes(), read once by the caller (each read copies every pane).
-function place(s, ps) {
-  const tabs = new Set((s.tabs ?? []).map((c) => c.id));
-  return ps.find((p) => tabs.has(p.tab) && p.cwd)?.cwd || s.folder;
-}
 const where = (s, ps) => JSON.stringify([s.machine ?? null, place(s, ps)]);
 const base = (path) => path.replace(/\/+$/, "").split("/").pop();
+// A row's hover action: an 18×18 square that swallows the press, so the row keeps
+// its own click and drag. `on` gets the press's cx so the caller can clear the
+// row's hover once it fired.
+const rowButton = (t, id, glyph, tip, on) => h_flex().id(id).size(18).flex_none().rounded(4).items_center().justify_center().text_color(t.dim)
+  .hover(s => s.bg(t.raised).text_color(t.foreground))
+  .tooltip(tip)
+  .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+  .on_click((_e, cx) => { cx.stop_propagation(); on(cx); })
+  .child(svg(`mods/herdr-van/icons/${glyph}.svg`).size(12));
 // Changes made outside Herdr (an editor's save, a commit in another app): looked
 // for this often, in repos the list shows, while the window is in front.
 const FALLBACK = 60000;
@@ -52,6 +56,9 @@ export default class Spaces {
     cx.timer.every(15000, cx => this.refreshMachines(cx));
     // Whatever `due` waits for needs no faster tick than this; the rest is event-driven.
     cx.timer.every(1000, (cx) => this.checkNew(cx));
+    // Brings the process records up to date with the core; it writes shared state
+    // only when something changed, and that write is what redraws the rows.
+    cx.timer.every(2000, (cx) => cx.spawn(() => syncProcs()));
   }
 
   checkNew(cx) {
@@ -239,8 +246,7 @@ export default class Spaces {
   }
 
   menu(w) {
-    // A popup is as tall as its items; height is only the most.
-    openOverlay({ mod: "menu", kind: "popup", width: 200, height: 260, props: { tab: "space", target: { id: w.id } } });
+    openOverlay({ mod: "herdr-van", props: { part: "spaceMenu", space: w.id }, kind: "popup", width: 224, frame: "none" });
   }
 
   // Spaces in order, each worktree space moved under its main checkout's.
@@ -267,7 +273,7 @@ export default class Spaces {
   // The rows, under a header per machine once one isn't this computer.
   grouped(t, collapsed) {
     const rows = this.ordered();
-    const draw = (r) => (collapsed ? this.compact(r, t) : this.row(r, t));
+    const draw = (r) => (collapsed ? [this.compact(r, t)] : [this.row(r, t), ...this.procRows(r.w, t)]);
     const remote = [...new Set([...rows.map(r => r.w.machine).filter(Boolean), ...this.machines.map(m => m.name)])].sort();
     const loading = m => {
       const layout = machines().find(k => k.name === m)?.layout;
@@ -275,7 +281,7 @@ export default class Spaces {
         || spaces().some(s => (s.machine ?? null) === m && !this.shown.has(s.id));
     };
     const loadingRow = m => div().id(`machine-loading-${m ?? "local"}`).h(28).flex_none().px(8).text_size(12).text_color(t.dim).child(collapsed ? "…" : "Loading…");
-    if (!remote.length) return loading(null) && !rows.length ? [loadingRow(null)] : rows.map(draw);
+    if (!remote.length) return loading(null) && !rows.length ? [loadingRow(null)] : rows.flatMap(draw);
     const machineNames = [null, ...remote];
     return machineNames.flatMap((m) => {
       const mine = rows.filter((r) => (r.w.machine ?? null) === m);
@@ -300,7 +306,7 @@ export default class Spaces {
         .text_size(12).text_color(t.dim).hover(s => s.bg(t.hover).text_color(t.foreground))
         .on_click(() => run("space.new", m ? { machine: m } : {}))
         .child(svg("mods/herdr-van/icons/plus.svg").size(12)).when(!collapsed, el => el.child("New space there"));
-      return [head, ...(folded ? [] : mine.length ? mine.map(draw) : [loading(m) ? loadingRow(m) : empty])];
+      return [head, ...(folded ? [] : mine.length ? mine.flatMap(draw) : [loading(m) ? loadingRow(m) : empty])];
     });
   }
 
@@ -375,19 +381,9 @@ export default class Spaces {
           .child(g ? this.gitTail(g, tree, w.name, t) : div().flex_1())
           .when(this.hoverRow === `space-${w.id}`, el => el.child(
             h_flex().gap(2).items_center()
-              .child(h_flex().id(`space-save-${w.id}`).size(18).flex_none().rounded(4).items_center().justify_center().text_color(t.dim)
-                .hover(s => s.bg(t.raised).text_color(t.foreground))
-                .tooltip("Save as workspace")
-                .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
-                .on_click((_e, cx) => { cx.stop_propagation(); this.saveLive(w.id); this.clearHover(cx); })
-                .child(svg("mods/herdr-van/icons/layers.svg").size(12)))
+              .child(rowButton(t, `space-save-${w.id}`, "layers", "Save as workspace", (cx) => { this.saveLive(w.id); this.clearHover(cx); }))
               .when((shared(MODE) ?? "active") === "all", row => row.child(
-                h_flex().id(`space-unload-${w.id}`).size(18).flex_none().rounded(4).items_center().justify_center().text_color(t.dim)
-                  .hover(s => s.bg(t.raised).text_color(t.foreground))
-                  .tooltip("Unload (keeps it in Saved)")
-                  .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
-                  .on_click((_e, cx) => { cx.stop_propagation(); this.unload(w); this.clearHover(cx); })
-                  .child(svg("mods/herdr-van/icons/close.svg").size(12)))))),
+                rowButton(t, `space-unload-${w.id}`, "close", "Unload (keeps it in Saved)", (cx) => { this.unload(w); this.clearHover(cx); }))))),
       );
   }
 
@@ -404,6 +400,35 @@ export default class Spaces {
       .child(div().text_color(w.active ? t.foreground : t.muted).child(String(i + 1)))
       // A space speaks up only when something in it needs you.
       .child(div().text_color(t[w.status] ?? t.unknown).child(w.status === "blocked" || w.status === "done" ? "●" : "·"));
+  }
+
+  // One row per process of this space, in the sub-agent row's geometry: the
+  // state word is the whole story, since a process reports no status of its own.
+  procRows(w, t) {
+    return procsOf(w.id).map((rec) => {
+      const term = this.live?.get(rec.address);
+      const pic = icon(term?.program, 14, t.foreground);
+      const state = term ? "running"
+        : rec.ended ? (rec.ended.reason === "killed" ? "stopped" : rec.ended.code == null ? "ended" : `exited ${rec.ended.code}`)
+        : rec.address ? "ended"
+        : "not started";
+      return h_flex().id(`runner-${rec.id}`).pl(15).pr(8).h(26).flex_none().gap(0).items_center().rounded(8).text_size(12.5)
+        .hover((s) => s.bg(t.hover))
+        .tooltip(rec.cmd)
+        .on_click(() => (term ? run("terminal.peek", { terminal: term.address }) : rerunProc(rec)))
+        .on_hover((on, cx) => this.setHover(`runner-${rec.id}`, on, cx))
+        .child(div().self_start().mt(-4).w(9).h(17).mr(4).flex_none().border_l(1.5).border_color(t.input).border_b(1.5).rounded_bl(6))
+        .when(Boolean(pic), (el) => el.child(div().mr(8).child(pic)))
+        .child(div().flex_1().truncate().text_color(t.muted).child(rec.name))
+        .child(div().flex_none().text_size(11).text_color(term ? t.ansi2 : t.dim).child(state))
+        .when(this.hoverRow === `runner-${rec.id}`, (el) => el.child(h_flex().gap(2).items_center()
+          .child(rowButton(t, `runner-rename-${rec.id}`, "square-pen", "Rename", (cx) => {
+            openOverlay({ mod: "herdr-van", props: { part: "runner", space: w.id, id: rec.id }, kind: "dialog", width: 380, frame: "none" });
+            this.clearHover(cx);
+          }))
+          .when(!term, (row) => row.child(rowButton(t, `runner-rerun-${rec.id}`, "refresh", "Run it again", (cx) => { rerunProc(rec); this.clearHover(cx); })))
+          .child(rowButton(t, `runner-${term ? "stop" : "forget"}-${rec.id}`, "x", term ? "Stop" : "Forget", (cx) => { (term ? stopProc(rec) : forgetProc(rec)); this.clearHover(cx); }))));
+    });
   }
 
   // Saved workspaces with no live space behind them: muted, below the live
@@ -485,6 +510,8 @@ export default class Spaces {
     const t = theme();
     const collapsed = narrow();
     const sp = spaces();
+    // One scan for the live terminals, before grouped.
+    this.live = liveByAddress();
     // Keeps shared "space.colors" in step; the rows read it through spaceFill.
     spaceColors();
     // Both header buttons are 22×22: a box sized from its label plus padding is

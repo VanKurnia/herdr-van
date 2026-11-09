@@ -1,10 +1,10 @@
 // Agents in grouped or priority views; parents take their most urgent sub-agent's place.
 // A viewed done agent stays in Done until left.
 
-import { div, image, svg } from "gpui-kit";
+import { div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { agents, terminals, panes, focused, spaces, run, theme, shared, setShared, setAgentOrder, openOverlay, closeOverlay, props } from "herdr";
-import { claimSidebarHover, narrow } from "./lib.js";
+import { claimSidebarHover, narrow, icon, menuCard } from "./lib.js";
 
 const clean = (s) => (s ?? "").replace(/^[^\p{L}\p{N}]+/u, "").trim();
 
@@ -40,12 +40,6 @@ function duration(ms) {
   if (m < 60) return `${m}m`;
   const h = Math.floor(m / 60);
   return h < 24 ? `${h}h` : `${Math.floor(h / 24)}d`;
-}
-
-// The agent's icon from the app's program table: a one-color glyph or a picture.
-function icon(p, size, color) {
-  if (!p?.icon) return null;
-  return p.tint ? svg(p.icon).size(size).flex_none().text_color(color) : image(p.icon).w(size).h(size).flex_none();
 }
 
 export default class Agents {
@@ -116,37 +110,7 @@ export default class Agents {
   // a row's menu are the same shape; the shipped `menu` mod knows panes, tabs and
   // spaces only, so the agents list draws its own.
   popup(t, title, rows, onPick) {
-    return v_flex()
-      .w_full()
-      .p(5)
-      .bg(t.popover)
-      .text_size(12.8)
-      .track_focus(this.handle)
-      .on_key_down((e, cx) => {
-        if (e.key === "down") this.menuAt = (this.menuAt + 1) % rows.length;
-        else if (e.key === "up") this.menuAt = (this.menuAt + rows.length - 1) % rows.length;
-        else if (e.key === "enter") return onPick(this.menuAt);
-        else if (e.key === "escape") return closeOverlay(props().overlay);
-        else return;
-        cx.notify();
-      })
-      .child(div().px(8).pt(4).pb(6).text_size(11).text_color(t.dim).truncate().child(title))
-      .children(rows.map((r, i) => v_flex()
-        .when(r.rule, (el) => el.child(div().mx(7).my(4).h(1).bg(t.border)))
-        .child(h_flex()
-          .id(`mrow-${i}`)
-          .h(31)
-          .px(8)
-          .gap(9)
-          .rounded(7)
-          .items_center()
-          .text_color(t.foreground)
-          .when(i === this.menuAt, (el) => el.bg(t.selected))
-          .hover((s) => s.bg(t.hover))
-          .on_click(() => onPick(i))
-          .child(svg(`mods/herdr-van/icons/${r.icon}.svg`).size(14).flex_none().text_color(t.muted))
-          .child(div().flex_1().child(r.label))
-          .when(r.checked, (el) => el.child(svg("mods/herdr-van/icons/check.svg").size(14).flex_none().text_color(t.foreground))))));
+    return menuCard(t, { handle: this.handle, title, rows, at: this.menuAt, onMove: (n) => (this.menuAt = n), onPick });
   }
 
   sortMenu(t) {

@@ -5,14 +5,10 @@
 // the reason this part exists rather than the stock header. Props: { pane, terminal }.
 // Click: focus the pane.
 
-import { View, div, svg, image } from "gpui-kit";
+import { View, div, svg } from "gpui-kit";
 import { h_flex } from "gpui-base";
 import { panes, run, theme, home, shared } from "herdr";
-
-function icon(p, size, color) {
-  if (!p?.icon) return null;
-  return p.tint ? svg(p.icon).size(size).flex_none().text_color(color) : image(p.icon).w(size).h(size).flex_none();
-}
+import { icon } from "./lib.js";
 
 function folder(cwd) {
   if (!cwd) return "";

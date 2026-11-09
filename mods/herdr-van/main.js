@@ -1,6 +1,6 @@
-// herdr-van: one mod, seven parts. The layout puts a copy of it in each block
+// herdr-van: one mod, ten parts. The layout puts a copy of it in each block
 // and names the part with props: { part: "tabs" | "spaces" | "agents" |
-// "brand" | "footer" | "pane" }. Only that part starts, so the spaces' git
+// "brand" | "footer" | "pane" | "jump" | "runner" | "spaceMenu" }. Only that part starts, so the spaces' git
 // polling, the agents' timer and the brand's config watch never run twice.
 //
 // Props are read with props(), not the init argument: the agents list also opens
@@ -16,8 +16,10 @@ import Agents from "./agents.js";
 import Chrome from "./chrome.js";
 import Pane from "./pane.js";
 import Jump from "./jump.js";
+import Runner from "./runner.js";
+import SpaceMenu from "./spaceMenu.js";
 
-const PARTS = { tabs: Tabs, spaces: Spaces, agents: Agents, brand: Chrome, footer: Chrome, pane: Pane, jump: Jump };
+const PARTS = { tabs: Tabs, spaces: Spaces, agents: Agents, brand: Chrome, footer: Chrome, pane: Pane, jump: Jump, runner: Runner, spaceMenu: SpaceMenu };
 
 const partName = (cfg) => (cfg?.sortMenu || cfg?.agentMenu ? "agents" : cfg?.part ?? "brand");
 

@@ -26,6 +26,10 @@ const ARM = "prefix.armed";
 // saved workspaces in one filterable list. The shipped picker keeps its own key.
 const openJump = () => openOverlay({ mod: "herdr-van", props: { part: "jump" }, kind: "popup", at: "top", offset: 40, width: 560, frame: "none" });
 
+// prefix+r: a new runner process in the space you are in. The form part owns the
+// name and the command; the space supplies the folder.
+const openRunner = () => openOverlay({ mod: "herdr-van", props: { part: "runner", space: focused()?.space }, kind: "dialog", width: 460, frame: "none" });
+
 // The sidebar button in the brand row, not Herdr's hide: narrow to the rail and
 // back to the width it had. A mod cannot import another mod's files, so this
 // repeats the chrome mods' rule — the 160px rail test and the `sidebar.width`
@@ -55,7 +59,7 @@ const SECTIONS = [
     ["L", "Swap right", "pane.swap", { direction: "right" }],
     ["z", "Zoom pane", "pane.zoom"],
     ["x", "Close pane", "pane.close"],
-    ["r", "Resize mode", null, {}, "drag a split's border"],
+    ["r", "Run a process…", openRunner],
     ["[", "Copy mode", null, {}, "mouse-select, then ^⇧C"],
     ["tab", "Cycle pane", null, {}, "use h j k l"],
     ["e", "Edit scrollback", null, {}, "no scrollback editor"],

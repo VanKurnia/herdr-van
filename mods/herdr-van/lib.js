@@ -2,7 +2,9 @@
 // hover claim and the toggle. One copy, so the 160px threshold and the width to
 // return to cannot drift between the tab bar, the lists and the brand.
 
-import { layout, run, shared, setShared, spaces, window } from "herdr";
+import { div, image, svg } from "gpui-kit";
+import { v_flex, h_flex } from "gpui-base";
+import { closeOverlay, layout, props, run, shared, setShared, spaces, window } from "herdr";
 
 // This layout's first block, so no tree walk is needed.
 export const sidebar = () => layout()?.children?.find((n) => n.id === "sidebar");
@@ -58,4 +60,54 @@ export function spaceColors() {
 export function spaceFill(t, s) {
   const color = (shared("space.colors") ?? {})[s.id] ?? PALETTE[0];
   return color.startsWith("#") ? color : (MARK[color] ?? t[color]);
+}
+
+// Where a space is now: the folder of the pane it shows, else any pane in its
+// tabs, else where it was made. `ps` is panes(), read once by the caller.
+export function place(s, ps) {
+  const tabs = new Set((s.tabs ?? []).map((c) => c.id));
+  return ps.find((p) => tabs.has(p.tab) && p.cwd)?.cwd || s.folder;
+}
+
+// The program's icon from the app's table: a one-color glyph, or a picture.
+export function icon(p, size, color) {
+  if (!p?.icon) return null;
+  return p.tint ? svg(p.icon).size(size).flex_none().text_color(color) : image(p.icon).w(size).h(size).flex_none();
+}
+
+// A menu popup: a title, rows (each may carry `rule` for a divider above it and
+// `checked` for a tick), ↑/↓ then Enter, Esc to close. The cursor and the focus
+// handle belong to the caller, so its own state stays its own.
+export function menuCard(t, { handle, title, rows, at, onMove, onPick }) {
+  return v_flex()
+    .w_full()
+    .p(5)
+    .bg(t.popover)
+    .text_size(12.8)
+    .track_focus(handle)
+    .on_key_down((e, cx) => {
+      if (e.key === "enter") return onPick(at);
+      if (e.key === "escape") return closeOverlay(props().overlay);
+      const next = e.key === "down" ? (at + 1) % rows.length : e.key === "up" ? (at + rows.length - 1) % rows.length : null;
+      if (next === null) return;
+      onMove(next);
+      cx.notify();
+    })
+    .child(div().px(8).pt(4).pb(6).text_size(11).text_color(t.dim).truncate().child(title))
+    .children(rows.map((r, i) => v_flex()
+      .when(r.rule, (el) => el.child(div().mx(7).my(4).h(1).bg(t.border)))
+      .child(h_flex()
+        .id(`mrow-${i}`)
+        .h(31)
+        .px(8)
+        .gap(9)
+        .rounded(7)
+        .items_center()
+        .text_color(t.foreground)
+        .when(i === at, (el) => el.bg(t.selected))
+        .hover((s) => s.bg(t.hover))
+        .on_click(() => onPick(i))
+        .child(svg(`mods/herdr-van/icons/${r.icon}.svg`).size(14).flex_none().text_color(t.muted))
+        .child(div().flex_1().child(r.label))
+        .when(r.checked, (el) => el.child(svg("mods/herdr-van/icons/check.svg").size(14).flex_none().text_color(t.foreground))))));
 }
