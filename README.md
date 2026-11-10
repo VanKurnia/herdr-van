@@ -18,6 +18,10 @@ backdrop — no boxes, no bottom bar, no clutter.
   badge when they need you, a green dot when they're done. Collapsed to the rail it
   keeps the logo where the wordmark was, and swaps it for the expand button under
   the pointer.
+- **Spaces with their own icon.** A space can wear any `.svg` or `.png` from
+  `~/.config/herdr-app/custom-icons/`, picked from the row's hover button. The
+  icon is kept with the space's workspace, so a closed and reopened space comes
+  back wearing it, and `Default` in the picker puts the letter tile back.
 - **A tab bar with nothing extra.** Pills, a `+` right after the last tab, one
   window-close button. No pill ✕, no Files/Changes buttons, no status bar.
 - **The Pi logo.** Pi agents wear their real three-color logo instead of the

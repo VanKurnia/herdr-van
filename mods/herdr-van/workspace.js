@@ -20,6 +20,29 @@ export function writeList(next) {
   setShared(LIST, next);
 }
 
+// One pass per render: the record behind each live space, for its icon.
+export function liveRecords() {
+  const map = new Map();
+  for (const r of list().records) if (r.live != null) map.set(r.live, r);
+  return map;
+}
+
+const patchIcon = (id, icon) => writeList({ v: 1, records: list().records.map((r) => (r.id === id ? { ...r, icon } : r)) });
+
+// The icon of a saved record, or of a live space that has none yet: a live
+// space with no record gets one first, because the record is the only thing
+// that outlives the space. Returns { error } when the save cannot happen.
+export async function setIcon({ space, record: id }, icon) {
+  // A row's record can lag a render behind, so the live space answers for it.
+  const target = id ?? liveRecords().get(space)?.id;
+  if (target) { patchIcon(target, icon); return null; }
+  if (!icon) return null;
+  const saved = await saveSpace(space);
+  if (saved.error) return saved;
+  patchIcon(saved.id, icon);
+  return null;
+}
+
 // The core's app document (spaces and their tab trees), or null. Never throws: a
 // mod must not throw in init, or the sidebar keeps the last good build.
 export async function readDoc() {
@@ -83,7 +106,7 @@ export function snapshotDoc(doc) {
 
 // The store's only constructor, so the record shape lives in one place.
 // `machine` stays null: only this machine's spaces are saved.
-function record(snap, { id, auto, live }) {
+function record(snap, { id, auto, live, icon }) {
   const now = Date.now();
   return {
     id: id ?? "w" + now.toString(36) + Math.random().toString(36).slice(2, 5),
@@ -94,6 +117,7 @@ function record(snap, { id, auto, live }) {
     auto,
     saved_at: now,
     live,
+    icon: icon ?? null,
     tabs: snap.tabs,
   };
 }
@@ -107,8 +131,11 @@ export async function saveSpace(spaceId) {
   if (!snap) return { error: "space not in docs.json" };
   if (snap.machine != null) return { error: "remote spaces cannot be saved here" };
   const { records } = list();
-  const at = records.findIndex((r) => !r.auto && r.folder === snap.folder && r.name === snap.name);
-  const rec = record(snap, { id: records[at]?.id, auto: false, live: spaceId });
+  // Prefer the record already attached to this live space: a renamed space
+  // would otherwise fork a second record for the same space.
+  const attached = records.findIndex((r) => !r.auto && r.live === spaceId);
+  const at = attached >= 0 ? attached : records.findIndex((r) => !r.auto && r.folder === snap.folder && r.name === snap.name);
+  const rec = record(snap, { id: records[at]?.id, auto: false, live: spaceId, icon: records[at]?.icon ?? null });
   writeList({ v: 1, records: at < 0 ? [...records, rec] : records.map((r, i) => (i === at ? rec : r)) });
   return { id: rec.id };
 }

@@ -63,6 +63,14 @@ works.
   machine's row is refused (`space.move` stays inside a machine). The
   avatar color is stored per space; git branch, ahead and behind appear after
   the name when they're unusual.
+- **A space's icon**: hovering a space row shows a `square-pen` button that opens
+  a 300px `Icon` dialog — `Default` plus every `.svg` and `.png` in
+  `~/.config/herdr-app/custom-icons/`, drawn in full color. Picking one draws it
+  alone at 22px in the space's 24px slot — the color tile (24px, radius 6, the
+  initial at 13px bold) goes with the letter, so
+  it appears only while a space has none — and writes it on the space's workspace
+  record, so it survives unload, reopening and a layout switch; `Default` brings
+  the letter and its color back. ↑↓ then Enter, Esc closes.
 - **Ctrl+B** opens nothing: a `⌥ Prefix` badge appears at the right end of the
   footer while the next key is expected (four seconds), then goes. `?` opens the
   guide — the full table of the bindings it keeps.
@@ -114,7 +122,7 @@ gradient `#000000` → `#1a1b26`, the WezTerm `grid-tile.png` lattice tiled at
 40px, and the top-third-transparent fade baked in. Herdr takes one background
 layer, so three WezTerm layers were flattened into one here.
 
-**One mod, six parts.** `mods/herdr-van/` is the whole window chrome: the
+**One mod, eleven parts.** `mods/herdr-van/` is the whole window chrome: the
 layout puts a copy of it in each block and names the part with
 `props: { part: … }`, and `main.js` starts only that part — so the spaces' git
 polling, the agents' timer and the brand's config watch each run once, never
@@ -128,11 +136,19 @@ once per block.
 | `brand` | `brand` | shipped `workspace-chrome`'s brand row, reworked below |
 | `footer` | `sidebar-footer` | shipped `workspace-chrome`'s footer, cut to one gear, plus the herdr-tui `⌥ Prefix` badge it shows while a prefix waits |
 | `pane` | each pane's header | shipped `pane` header reworked below: icon, name, folder, status, split/zoom/close, and the Pi-Changes toggle on a pi pane |
+| `icon` | none — opened by a spaces row as an overlay, `props: { part: "icon", space, record, name, icon, fill }` | its own list: `Default` plus every `.svg`/`.png` in `custom-icons/`, ↑↓/Enter/Esc, rows 34px, 24px art, list capped at 340px |
 
 `lib.js` holds what the sidebar parts share — `sidebar()`, the 160px rail test and
-`toggleSidebar()` — so the threshold and the width to return to cannot drift
-between them. `icons/` holds every SVG the mod draws, so nothing points into
+`toggleSidebar()`, plus `spaceFill()` and the 24px `avatar()` tile the spaces list
+and the jump list both draw — so the threshold and the width to return to cannot
+drift between them. `icons/` holds every SVG the mod draws, so nothing points into
 another mod's folder.
+
+A space's icon lives on its workspace record (`icon`, `null` when it has none),
+next to `id`, `name`, `folder` and `tabs`, in shared `workspace.list` — the record
+is the only thing that outlives a closed space, so setting an icon on a live space
+without one saves it as a workspace first. Every other write to a record is a
+spread of the old one, so the field survives unload, reopen and rename.
 
 The tab bar draws no Files/Changes toggles at all: this layout has no `panel`
 node, so there is nothing to toggle and the shipped per-space panel memory went
@@ -252,7 +268,7 @@ hourglass) draws as an empty box.
   reaches them. `?` is this mod's toggle, so `app.help` is not on the prefix.
 - Rename and close space/tab open Herdr's own dialogs, because the app asks for
   the name itself. Dimmed rows close the card and post a toast.
-- One mod means one folder: saving any of the six part files reloads all six
+- One mod means one folder: saving any of the eleven part files reloads all eleven
   copies in place. A part that throws takes only its own block down.
 - Sizes assume a 1080p+ window; the 2560×1440 backdrop is `cover`-fit and holds
   up on HiDPI, and the 40px grid pitch survives any size by construction.

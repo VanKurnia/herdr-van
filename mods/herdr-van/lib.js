@@ -9,6 +9,19 @@ import { closeOverlay, layout, props, run, shared, setShared, spaces, window } f
 // This layout's first block, so no tree walk is needed.
 export const sidebar = () => layout()?.children?.find((n) => n.id === "sidebar");
 
+// Any node by id, wherever the layout nests it: the quota panel sits in the row
+// beside the panes, not at the root the way the sidebar does.
+const walk = (node, id) => {
+  if (!node) return null;
+  if (node.id === id) return node;
+  for (const child of node.children ?? []) {
+    const hit = walk(child, id);
+    if (hit) return hit;
+  }
+  return null;
+};
+export const findBlock = (id) => walk(layout(), id);
+
 // The rail goes by width, not a flag: dragging the sidebar's edge narrows it too.
 export const narrow = () => (sidebar()?.size?.px ?? Infinity) < 160;
 
@@ -61,6 +74,12 @@ export function spaceFill(t, s) {
   const color = (shared("space.colors") ?? {})[s.id] ?? PALETTE[0];
   return color.startsWith("#") ? color : (MARK[color] ?? t[color]);
 }
+
+// The 24px tile a space is drawn with: its colour and initial, or its icon —
+// an icon stands alone, so the colour only marks the spaces that carry a letter.
+export const avatar = (fill, name, ink, icon) => h_flex().size(24).flex_none().rounded(6).items_center().justify_center()
+  .when(Boolean(icon), (el) => el.child(image(icon).w(22).h(22).flex_none()))
+  .when(!icon, (el) => el.bg(fill).child(div().text_size(13).font_bold().text_color(ink).child([...name][0]?.toUpperCase() ?? "?")));
 
 // Where a space is now: the folder of the pane it shows, else any pane in its
 // tabs, else where it was made. `ps` is panes(), read once by the caller.

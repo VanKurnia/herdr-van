@@ -6,16 +6,17 @@
 import { div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { spaces, machines, panes, run, openOverlay, exec, hc, theme, shared, setShared, watchFolder, window, notify } from "herdr";
-import { claimSidebarHover, narrow, onSidebar, place, spaceColors, spaceFill, icon } from "./lib.js";
-import { readDoc, snapshotDoc, saveSpace, saveAuto, signature, list, writeList, MODE, dropRecord, openWorkspace } from "./workspace.js";
+import { avatar, claimSidebarHover, narrow, onSidebar, place, spaceColors, spaceFill, icon } from "./lib.js";
+import { readDoc, snapshotDoc, saveSpace, saveAuto, signature, list, writeList, liveRecords, MODE, dropRecord, openWorkspace } from "./workspace.js";
 import { procsOf, liveByAddress, syncProcs, stopProc, forgetProc, rerunProc } from "./runner.js";
+import { listIcons, pickerHeight } from "./iconPicker.js";
 
 const where = (s, ps) => JSON.stringify([s.machine ?? null, place(s, ps)]);
 const base = (path) => path.replace(/\/+$/, "").split("/").pop();
 // A row's hover action: an 18×18 square that swallows the press, so the row keeps
 // its own click and drag. `on` gets the press's cx so the caller can clear the
 // row's hover once it fired.
-const rowButton = (t, id, glyph, tip, on) => h_flex().id(id).size(18).flex_none().rounded(4).items_center().justify_center().text_color(t.dim)
+const rowButton = (t, id, glyph, tip, on, color = t.dim) => h_flex().id(id).size(18).flex_none().rounded(4).items_center().justify_center().text_color(color)
   .hover(s => s.bg(t.raised).text_color(t.foreground))
   .tooltip(tip)
   .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
@@ -335,6 +336,7 @@ export default class Spaces {
   row({ w, i, g, tree }, t) {
     const on = w.active;
     const fill = spaceFill(t, w);
+    const rec = this.records.get(w.id);
     return v_flex()
       .relative()
       .id(`space-${w.id}`)
@@ -376,11 +378,13 @@ export default class Spaces {
           .gap(9)
           .items_center()
           .when(Boolean(tree), el => el.pl(22).child(svg("mods/herdr-van/icons/branch.svg").size(13).text_color(t.dim)))
-          .when(!tree, el => el.child(h_flex().size(18).flex_none().rounded(5).bg(fill).items_center().justify_center().text_size(10.5).font_bold().text_color("#ffffff").child([...w.name][0]?.toUpperCase() ?? "?")))
+          .when(!tree, el => el.child(avatar(fill, w.name, "#ffffff", rec?.icon)))
           .child(div().flex_shrink(0).max_w(150).truncate().text_color(t.foreground).child(w.name))
           .child(g ? this.gitTail(g, tree, w.name, t) : div().flex_1())
           .when(this.hoverRow === `space-${w.id}`, el => el.child(
             h_flex().gap(2).items_center()
+              .child(rowButton(t, `space-icon-${w.id}`, "square-pen", "Icon", (cx) =>
+                this.pickIcon({ space: w.id, record: rec?.id, name: w.name, icon: rec?.icon, fill }, cx)))
               .child(rowButton(t, `space-save-${w.id}`, "layers", "Save as workspace", (cx) => { this.saveLive(w.id); this.clearHover(cx); }))
               .when((shared(MODE) ?? "active") === "all", row => row.child(
                 rowButton(t, `space-unload-${w.id}`, "close", "Unload (keeps it in Saved)", (cx) => { this.unload(w); this.clearHover(cx); }))))),
@@ -408,26 +412,29 @@ export default class Spaces {
     return procsOf(w.id).map((rec) => {
       const term = this.live?.get(rec.address);
       const pic = icon(term?.program, 14, t.foreground);
-      const state = term ? "running"
-        : rec.ended ? (rec.ended.reason === "killed" ? "stopped" : rec.ended.code == null ? "ended" : `exited ${rec.ended.code}`)
-        : rec.address ? "ended"
-        : "not started";
+      // The outcome is a mark, not a word: a run in flight, one that finished, one
+      // the person stopped, and a failure. The exit code rides in the tooltip.
+      const [glyph, color] = term ? ["play", t.ansi2]
+        : rec.ended?.reason === "killed" ? ["square", t.ansi3]
+        : rec.ended?.code ? ["x", t.ansi1]
+        : rec.ended || rec.address ? ["check", t.dim]
+        : ["clock", t.dim];
       return h_flex().id(`runner-${rec.id}`).pl(15).pr(8).h(26).flex_none().gap(0).items_center().rounded(8).text_size(12.5)
         .hover((s) => s.bg(t.hover))
-        .tooltip(rec.cmd)
+        .tooltip(rec.ended?.code ? `${rec.cmd} · exited ${rec.ended.code}` : rec.cmd)
         .on_click(() => (term ? run("terminal.peek", { terminal: term.address }) : rerunProc(rec)))
         .on_hover((on, cx) => this.setHover(`runner-${rec.id}`, on, cx))
         .child(div().self_start().mt(-4).w(9).h(17).mr(4).flex_none().border_l(1.5).border_color(t.input).border_b(1.5).rounded_bl(6))
         .when(Boolean(pic), (el) => el.child(div().mr(8).child(pic)))
         .child(div().flex_1().truncate().text_color(t.muted).child(rec.name))
-        .child(div().flex_none().text_size(11).text_color(term ? t.ansi2 : t.dim).child(state))
+        .child(svg(`mods/herdr-van/icons/${glyph}.svg`).size(13).flex_none().text_color(color))
         .when(this.hoverRow === `runner-${rec.id}`, (el) => el.child(h_flex().gap(2).items_center()
           .child(rowButton(t, `runner-rename-${rec.id}`, "square-pen", "Rename", (cx) => {
             openOverlay({ mod: "herdr-van", props: { part: "runner", space: w.id, id: rec.id }, kind: "dialog", width: 380, frame: "none" });
             this.clearHover(cx);
           }))
-          .when(!term, (row) => row.child(rowButton(t, `runner-rerun-${rec.id}`, "refresh", "Run it again", (cx) => { rerunProc(rec); this.clearHover(cx); })))
-          .child(rowButton(t, `runner-${term ? "stop" : "forget"}-${rec.id}`, "x", term ? "Stop" : "Forget", (cx) => { (term ? stopProc(rec) : forgetProc(rec)); this.clearHover(cx); }))));
+          .when(!term, (row) => row.child(rowButton(t, `runner-rerun-${rec.id}`, "refresh", "Run it again", (cx) => { rerunProc(rec); this.clearHover(cx); }, t.ansi11)))
+          .child(rowButton(t, `runner-${term ? "stop" : "forget"}-${rec.id}`, "x", term ? "Stop" : "Forget", (cx) => { (term ? stopProc(rec) : forgetProc(rec)); this.clearHover(cx); }, t.ansi1))));
     });
   }
 
@@ -447,17 +454,19 @@ export default class Spaces {
       .opacity(0.55)
       .hover(s => s.bg(t.hover))
       .on_click((_e, cx) => openWorkspace(r, cx))
-      .child(h_flex().size(18).flex_none().rounded(5).bg(t.dim).items_center().justify_center()
-        .text_size(10.5).font_bold().text_color(t.chrome).child([...r.name][0]?.toUpperCase() ?? "?"))
+      .child(avatar(t.dim, r.name, t.chrome, r.icon))
       .child(div().flex_shrink(0).max_w(150).truncate().text_color(t.muted).child(r.name))
       .child(div().flex_1())
       .when(!collapsed && this.hoverRow === `workspace-${r.id}`, el => el.child(
-        h_flex().id(`workspace-forget-${r.id}`).size(18).flex_none().rounded(4).items_center().justify_center().text_color(t.dim)
-          .hover(s => s.bg(t.raised).text_color(t.foreground))
-          .tooltip("Forget this workspace")
-          .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
-          .on_click((_e, cx) => { cx.stop_propagation(); dropRecord(r.id); this.clearHover(cx); })
-          .child(svg("mods/herdr-van/icons/x.svg").size(11))))
+        h_flex().gap(2).items_center()
+          .child(rowButton(t, `workspace-icon-${r.id}`, "square-pen", "Icon", (cx) =>
+            this.pickIcon({ record: r.id, name: r.name, icon: r.icon, fill: t.dim }, cx)))
+          .child(h_flex().id(`workspace-forget-${r.id}`).size(18).flex_none().rounded(4).items_center().justify_center().text_color(t.dim)
+            .hover(s => s.bg(t.raised).text_color(t.foreground))
+            .tooltip("Forget this workspace")
+            .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+            .on_click((_e, cx) => { cx.stop_propagation(); dropRecord(r.id); this.clearHover(cx); })
+            .child(svg("mods/herdr-van/icons/x.svg").size(11)))))
       .on_hover((on, cx) => this.setHover(`workspace-${r.id}`, on, cx));
     return [head, ...recs.map(row)];
   }
@@ -478,6 +487,20 @@ export default class Spaces {
     this.pressed = null;
     this.over = null;
     cx.notify();
+  }
+
+  // The row hands the picker what it shows; its list is read before it opens, so
+  // nothing re-measures under the pointer.
+  pickIcon({ space, record, name, icon, fill }, cx) {
+    cx.spawn(async () => {
+      try {
+        const names = await listIcons();
+        openOverlay({ mod: "herdr-van", props: { part: "icon", space, record, name, icon, fill, names }, kind: "dialog", width: 300, height: pickerHeight(names), frame: "none" });
+      } catch (e) {
+        notify({ title: "Could not read custom-icons", body: String(e?.message ?? e), level: "error" });
+      }
+    });
+    this.clearHover(cx);
   }
 
   saveLive(spaceId) {
@@ -512,6 +535,8 @@ export default class Spaces {
     const sp = spaces();
     // One scan for the live terminals, before grouped.
     this.live = liveByAddress();
+    // One pass per render: the record behind each live space, for its icon.
+    this.records = liveRecords();
     // Keeps shared "space.colors" in step; the rows read it through spaceFill.
     spaceColors();
     // Both header buttons are 22×22: a box sized from its label plus padding is

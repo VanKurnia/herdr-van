@@ -8,7 +8,7 @@
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
 import { closeOverlay, panes, props, run, spaces, theme } from "herdr";
-import { spaceFill } from "./lib.js";
+import { avatar, spaceFill } from "./lib.js";
 import { list, openWorkspace } from "./workspace.js";
 
 const ROW_H = 28;
@@ -113,9 +113,6 @@ export default class Jump extends View {
 
     const rowId = (r) =>
       r.kind === "head" ? "head" : `${r.kind}-${r.kind === "space" ? r.s.id : r.kind === "tab" ? r.tab.id : r.rec.id}`;
-    const avatar = (fill, letter, text) =>
-      h_flex().size(18).flex_none().rounded(5).bg(fill).items_center().justify_center()
-        .text_size(10.5).font_bold().text_color(text).child(letter);
     // Only a row with a status gets a dot.
     const dot = (status) => div().w(12).flex_none().text_color(t[status] ?? t.dim).child(status ? "●" : "·");
 
@@ -130,7 +127,7 @@ export default class Jump extends View {
         .on_click((_e, cx) => this.go(r, cx));
       if (r.kind === "space") {
         return shell
-          .child(avatar(spaceFill(t, r.s), [...r.s.name][0]?.toUpperCase() ?? "?", "#ffffff"))
+          .child(avatar(spaceFill(t, r.s), r.s.name, "#ffffff"))
           .child(div().flex_none().max_w(220).truncate().font_semibold().child(r.s.name))
           .child(div().flex_1().truncate().text_size(11).text_color(t.dim).child(r.s.folder ?? ""))
           .child(dot(r.s.status));
@@ -146,7 +143,7 @@ export default class Jump extends View {
           .child(div().flex_1().truncate().text_size(11).text_color(t.dim).child(r.who || "empty"));
       }
       return shell.opacity(0.55).hover((s) => s.opacity(1).bg(t.hover))
-        .child(avatar(t.dim, [...r.rec.name][0]?.toUpperCase() ?? "?", t.chrome))
+        .child(avatar(t.dim, r.rec.name, t.chrome))
         .child(div().flex_none().max_w(220).truncate().text_color(t.muted).child(r.rec.name))
         .child(div().flex_1().truncate().text_size(11).text_color(t.dim)
           .child(`${r.rec.tabs.length} tab${r.rec.tabs.length === 1 ? "" : "s"} · closed`))
