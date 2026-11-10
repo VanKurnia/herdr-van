@@ -391,19 +391,26 @@ export default class Spaces {
       );
   }
 
+  // The rail draws what a row draws, with the name gone: same tile, same height,
+  // so a folded sidebar reads as one column of icons. The number still finds its
+  // way into the tooltip, since it is how a person picks a space by key, and the
+  // status sits on the tile so it cannot shift it off the column.
   compact({ w, i }, t) {
     return h_flex()
       .id(`space-${w.id}`)
-      .h(26)
+      .h(30)
       .flex_none()
       .justify_center()
-      .gap(4)
+      .rounded(8)
       .when(w.active, (el) => el.bg(t.raised))
       .hover((s) => s.bg(t.hover))
+      .tooltip(`${i + 1} · ${w.name}`)
       .on_click(() => run("space.select", { id: w.id }))
-      .child(div().text_color(w.active ? t.foreground : t.muted).child(String(i + 1)))
-      // A space speaks up only when something in it needs you.
-      .child(div().text_color(t[w.status] ?? t.unknown).child(w.status === "blocked" || w.status === "done" ? "●" : "·"));
+      .child(div().relative().size(24).flex_none()
+        .child(avatar(spaceFill(t, w), w.name, "#ffffff", this.records.get(w.id)?.icon))
+        // A space speaks up only when something in it needs you.
+        .child(div().absolute().top(0).right(-3).text_size(9).text_color(t[w.status] ?? t.unknown)
+          .child(w.status === "blocked" || w.status === "done" ? "●" : "·")));
   }
 
   // One row per process of this space, in the sub-agent row's geometry: the
@@ -450,13 +457,13 @@ export default class Spaces {
       .child(collapsed ? "" : "Saved");
     const row = (r) => h_flex()
       .id(`workspace-${r.id}`)
-      .h(30).flex_none().px(8).gap(9).items_center().rounded(8)
+      .h(30).flex_none().px(collapsed ? 0 : 8).gap(9).items_center().rounded(8)
+      .when(collapsed, (el) => el.justify_center())
       .opacity(0.55)
       .hover(s => s.bg(t.hover))
       .on_click((_e, cx) => openWorkspace(r, cx))
       .child(avatar(t.dim, r.name, t.chrome, r.icon))
-      .child(div().flex_shrink(0).max_w(150).truncate().text_color(t.muted).child(r.name))
-      .child(div().flex_1())
+      .when(!collapsed, (el) => el.child(div().flex_shrink(0).max_w(150).truncate().text_color(t.muted).child(r.name)).child(div().flex_1()))
       .when(!collapsed && this.hoverRow === `workspace-${r.id}`, el => el.child(
         h_flex().gap(2).items_center()
           .child(rowButton(t, `workspace-icon-${r.id}`, "square-pen", "Icon", (cx) =>
@@ -558,7 +565,7 @@ export default class Spaces {
       .on_hover(claimSidebarHover("spaces"))
       .child(h_flex().h(31).pl(16).pr(10).items_center().justify_between().text_size(11.5).text_color(t.dim)
         .when(!collapsed, el => el.child("Spaces"))
-        .when(onSidebar(), el => el.child(h_flex().gap(4).items_center().child(modeBtn).child(add))))
+        .when(!collapsed && onSidebar(), el => el.child(h_flex().gap(4).items_center().child(modeBtn).child(add))))
       .child(v_flex().flex_1().min_h(0).px(8).pb(14).overflow_y_scrollbar().mode("always")
         .on_mouse_up("left", (_e, cx) => { this.pressed = null; this.over = null; cx.notify(); })
         .children([...this.grouped(t, collapsed), ...this.savedRows(t, collapsed)]));
