@@ -131,6 +131,18 @@
                   "lone": true
                 }
               }
+            },
+            {
+              "id": "quota-panel",
+              "type": "block",
+              "content": {
+                "mod": "quota"
+              },
+              "size": {
+                "px": 320
+              },
+              "min": 240,
+              "max": 560
             }
           ],
           "padding": 0

@@ -1,7 +1,7 @@
 import { div, svg } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { theme, run, props, window, updates, exec, readTextFile, watchFolder, appHome, shared, setShared } from "herdr";
-import { claimSidebarHover, narrow, onSidebar, toggleSidebar } from "./lib.js";
+import { claimSidebarHover, findBlock, narrow, onSidebar, toggleSidebar } from "./lib.js";
 
 // ── Brand config ─────────────────────────────────────────────
 // The name lives in herdr-van-config.json at the Herdr home root
@@ -84,9 +84,19 @@ export default class Chrome {
       // The prefix mod publishes its waiting state; the badge is that state and
       // nothing else, so an idle footer says nothing about the prefix.
       const armed = Boolean(shared("prefix.armed"));
-      // The gear, and the prefix badge: an accent chip reading `⌥ Prefix`, right end.
+      // The gear, the quota panel's toggle, and the prefix badge: an accent chip
+      // reading `⌥ Prefix`, right end.
       // On the rail it would crowd the gear, so the agents list's strip carries the
-      // glyph alone instead (agents.js) and this row stays one gear.
+      // glyph alone instead (agents.js) and this row stays one gear; the quota
+      // toggle is left out there for the same reason.
+      const quota = findBlock("quota-panel");
+      const quotaOn = Boolean(quota) && !quota.hidden;
+      const gauge = h_flex().id("quota-toggle").size(28).flex_none().flex().items_center().justify_center().rounded(8)
+        .text_color(quotaOn ? t.accent : t.muted).cursor_pointer()
+        .tooltip(quotaOn ? "Hide the Quota panel" : "Show the Quota panel")
+        .hover(s => s.bg(t.hover).text_color(t.foreground))
+        .on_click(() => run("layout.toggle", { id: "quota-panel" }))
+        .child(svg("mods/quota/gauge.svg").size(14));
       const gear = h_flex().id("settings").size(28).flex_none().flex().items_center().justify_center().gap(4).rounded(8)
         .text_color(t.muted)
         .hover(s => s.bg(t.hover).text_color(t.foreground)).cursor_pointer()
@@ -100,7 +110,11 @@ export default class Chrome {
         .child("Prefix");
       return v_flex().id("sidebar-footer").size_full().border_t(1).border_color(t.border).px(8).justify_center()
         .on_hover(claimSidebarHover("footer"))
-        .child(h_flex().items_center().justify_between().child(gear).when(armed && !collapsed, el => el.child(badge)));
+        .child(h_flex().w_full().items_center().gap(2)
+          .when(!collapsed, el => el.child(gauge))
+          .child(gear)
+          .child(div().flex_1())
+          .when(armed && !collapsed, el => el.child(badge)));
     }
     // The brand's buttons are drawn only while the pointer is on the sidebar.
     const side = onSidebar();
