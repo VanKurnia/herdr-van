@@ -53,6 +53,9 @@ function languageOf(path) {
   return LANGUAGES[ext] || "text";
 }
 
+// Text draws a tab as nothing: pad each one out to the next 4-column stop.
+const untab = (text) => text.replace(/[^\t]*\t/g, (s) => s.slice(0, -1).padEnd((s.length - 1) - (s.length - 1) % 4 + 4));
+
 // Rows of a unified patch. Header noise (Index:, ===, ---, +++) is dropped — the File list
 // already names the file — and so is the marker character: the tint says what it said.
 function diffRows(patch) {
@@ -66,9 +69,9 @@ function diffRows(patch) {
     // `--- name` starts with `-` and `+++ name` with `+`.
     if (!inHunk) continue;
     const marker = line.charAt(0);
-    if (marker === "+") rows.push({ kind: "+", number: next++, text: line.slice(1) });
-    else if (marker === "-") rows.push({ kind: "-", number: old++, text: line.slice(1) });
-    else if (marker === " ") rows.push({ kind: " ", number: next++, text: line.slice(1) });
+    if (marker === "+") rows.push({ kind: "+", number: next++, text: untab(line.slice(1)) });
+    else if (marker === "-") rows.push({ kind: "-", number: old++, text: untab(line.slice(1)) });
+    else if (marker === " ") rows.push({ kind: " ", number: next++, text: untab(line.slice(1)) });
     else if (marker === "\\") rows.push({ kind: "meta", text: line });
   }
   return rows;
