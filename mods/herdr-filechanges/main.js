@@ -1,5 +1,5 @@
 import { View, div, svg } from "gpui-kit";
-import { v_flex, h_flex, v_resizable, resizable_panel, Editor, EditorState } from "gpui-base";
+import { v_flex, h_flex, v_resizable, resizable_panel, Editor, EditorState, Scrollbar, v_virtual_list } from "gpui-base";
 import { appHome, home, agents, focused, panes, props, closeOverlay, readTextFile, run, shared, setShared, terminals, theme, settings, watchFolder } from "herdr";
 
 // The snapshot the `herdr-filechanges` pi extension writes: pi's own log of the
@@ -610,9 +610,17 @@ export default class HerdrFileChanges extends View {
       .when(this.codeShut, (e) => e.cursor_pointer().on_click((_e, cx) => { this.toggleCode(cx); }));
 
     const codeBody = div().flex_1().min_h(0)
-      .when(this.mode === "diff" && this.rows.length > 0, (e) =>
-        e.child(v_flex().id("pi-diff").size_full().min_h(0).overflow_y_scrollbar()
-          .children(this.rows.map((row) => this.diffRow(row, t)))))
+      .when(this.mode === "diff" && this.rows.length > 0, (e) => e.child(
+        // Unwrapped rows are a fixed 18 px, so the list builds only what is on screen. Wrapped
+        // rows are as tall as their text, which a fixed-size list cannot place: that mode keeps
+        // building every row and paints its own bar.
+        this.wrap
+          ? v_flex().id("pi-diff").size_full().min_h(0).overflow_y_scrollbar()
+            .children(this.rows.map((row) => this.diffRow(row, t)))
+          : div().size_full().min_h(0).relative()
+            .child(v_virtual_list("pi-diff", this.rows.length, 18, (i) => String(i),
+              (range) => this.rows.slice(range.start, range.end).map((row) => this.diffRow(row, t))).size_full())
+            .child(Scrollbar.vertical("pi-diff").absolute().inset_0())))
       .when(this.mode === "file" && Boolean(editor), (e) => e.child(Editor.new(editor)))
       .when(empty, (e) => e.child(div().p(8).text_size(11).text_color(t.dim)
         .child(reading
