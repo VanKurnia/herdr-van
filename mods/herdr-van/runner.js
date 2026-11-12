@@ -76,7 +76,11 @@ export async function syncProcs() {
   if (!ms.length || !all.length || ms.some((m) => m.layout !== "ready")) return;
   const ids = new Set(all.map((s) => s.id));
   for (const rec of recs.filter((r) => !ids.has(r.space))) await forgetProc(rec);
-  if (!recs.some((r) => ids.has(r.space) && r.address && !r.ended)) return;
+  // While every runner's terminal is live the tick has its answer already: one `terminals()`
+  // read, no process. A record that is merely starting costs one `hc ls` and nothing else —
+  // the write below leaves every terminal the core reports live untouched.
+  const alive = liveByAddress();
+  if (!recs.some((r) => ids.has(r.space) && r.address && !r.ended && !alive.has(r.address))) return;
   const ls = await hc(["ls", "--all", "--json"]).catch(() => null);
   if (ls?.code !== 0) return;
   let done;
