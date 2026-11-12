@@ -213,8 +213,10 @@ export function nextAdd(target, live) {
 // The folder a restored space (and each of its tabs) starts in.
 const startFolder = (rec) => (rec.tabs ?? []).map((t) => firstLeaf(t.root)).find((l) => l?.cwd)?.cwd ?? rec.folder;
 
-// One restore at a time. Module scope, so it is shared by every copy of the mod.
-let opening = null;
+// One restore at a time, shared by every copy of the mod (module scope). A copy can be torn
+// down mid-restore without running its `finally`, so a claim older than this is ignored.
+const OPEN_STALE = 120000;
+let opening = null; // { name, at }
 
 const sleep = (cx, ms) => new Promise((resolve) => cx.timer.after(ms, () => resolve()));
 
@@ -233,11 +235,11 @@ export function openWorkspace(rec, cx) {
     run("space.select", { id: rec.live });
     return;
   }
-  if (opening) {
-    notify({ title: "Already opening a workspace", body: opening, level: "warning" });
+  if (opening && Date.now() - opening.at < OPEN_STALE) {
+    notify({ title: "Already opening a workspace", body: opening.name, level: "warning" });
     return;
   }
-  opening = rec.name;
+  opening = { name: rec.name, at: Date.now() };
   const before = new Set(spaces().map((s) => s.id));
   run("space.new", { name: rec.name, folder: startFolder(rec) });
   // cx.spawn's context stays valid for this whole task, across awaits.
