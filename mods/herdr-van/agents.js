@@ -2,7 +2,7 @@
 // A viewed done agent stays in Done until left.
 
 import { div, svg } from "gpui-kit";
-import { v_flex, h_flex } from "gpui-base";
+import { v_flex, h_flex, ScrollHandle } from "gpui-base";
 import { agents, terminals, panes, focused, spaces, run, theme, shared, setShared, setAgentOrder, openOverlay, closeOverlay, props } from "herdr";
 import { claimSidebarHover, narrow, icon, menuCard } from "./lib.js";
 
@@ -52,6 +52,8 @@ export default class Agents {
       return;
     }
     this.folded = new Set();
+    this.scroll = ScrollHandle.new();
+    this.scrolled = null; // the row last revealed
     // Each agent's last state and when it changed (ms), kept across restarts.
     this.changed = JSON.parse(localStorage.getItem("changed") ?? "{}");
     // Pins used to live here; `adoptPins` hands them to the terminals that still exist.
@@ -241,8 +243,9 @@ export default class Agents {
     const withKids = (a, i) => {
       const subs = collapsed ? [] : this.tree(kidsOf, a.address);
       const r = row(a, i, subs);
-      if (this.folded.has(a.address)) return [r];
-      return [r, ...subs.map((s) => this.subRow(t, s, shown, byPriority))];
+      const kids = this.folded.has(a.address) ? [] : subs;
+      // `who[k]` is the agent the k-th row stands for: the agent itself, then one per sub-agent.
+      return { els: [r, ...kids.map((s) => this.subRow(t, s, shown, byPriority))], who: [a.address, ...kids.map((s) => s.t.address)] };
     };
 
     // The fold chevron; folded, the count too, colored by the most urgent one.
@@ -400,9 +403,21 @@ export default class Agents {
           .when(!byPriority && top && top !== "idle", (el) => el.child(this.status(t, { status: top }, true)))
           .child(svg("mods/herdr-van/icons/chevron-right.svg").size(11).flex_none().text_color(t.dim)));
     };
-    const rows = collapsed
-      ? list.flatMap(withKids)
-      : groups.flatMap((g) => [header(g), ...(this.folded.has(g.id) ? [] : g.members.flatMap(withKids))]);
+    const rows = [];
+    const rowOf = []; // the agent each row stands for; null for a group header
+    const add = ({ els, who }) => { els.forEach((el, k) => { rows.push(el); rowOf.push(who[k]); }); };
+    if (collapsed) list.forEach((a, i) => add(withKids(a, i)));
+    else for (const g of groups) {
+      rows.push(header(g));
+      rowOf.push(null);
+      if (!this.folded.has(g.id)) g.members.forEach((a, i) => add(withKids(a, i)));
+    }
+    // The focused agent's own row, which may be a sub-agent's.
+    const at = rowOf.indexOf(shown);
+    if (at >= 0 && at !== this.scrolled) {
+      this.scrolled = at;
+      this.scroll.scroll_to_item(at);
+    }
 
     return v_flex()
       .id("sidebar-agents")
@@ -438,7 +453,7 @@ export default class Agents {
       .when(list.length === 0 && !collapsed, (el) =>
         el.child(div().px(12).text_size(12).text_color(t.dim).child("No agent status yet. Agents show up here when they report their status. Older versions and agents inside tmux may not.")),
       )
-      .child(v_flex().id("ag-list").flex_1().min_h(0).px(collapsed ? 0 : 8).overflow_y_scrollbar().mode("always").children(rows))
+      .child(v_flex().id("ag-list").flex_1().min_h(0).px(collapsed ? 0 : 8).overflow_y_scrollbar().mode("always").track_scroll(this.scroll).children(rows))
       // A strip under the list: the rail's prefix indicator, the option glyph in accent
       // while a prefix waits and nothing otherwise. The brand row at the top carries
       // the sidebar's toggle, so this strip is the indicator alone.

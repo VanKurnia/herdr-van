@@ -6,7 +6,7 @@
 // Read with props() so the layout router can hand it { part: "jump" }.
 
 import { View, div } from "gpui-kit";
-import { v_flex, h_flex, InputState, Input } from "gpui-base";
+import { v_flex, h_flex, InputState, Input, ScrollHandle } from "gpui-base";
 import { closeOverlay, panes, props, run, spaces, theme } from "herdr";
 import { avatar, spaceFill } from "./lib.js";
 import { list, openWorkspace } from "./workspace.js";
@@ -19,6 +19,8 @@ export default class Jump extends View {
     this.filter = "";
     this.at = null;
     this.rows = [];
+    this.scroll = ScrollHandle.new();
+    this.scrolled = null; // the `at` last revealed, so one request per move
     this.input = InputState.new({ placeholder: "Go to a space, a tab or a saved workspace…" });
     this.input.on("change", (_e, cx) => {
       this.filter = this.input.value();
@@ -109,6 +111,13 @@ export default class Jump extends View {
     if (this.at === null) this.at = Math.max(0, pickable.findIndex((r) => r.kind === "tab" && r.s.active && r.tab.active));
     this.at = Math.min(this.at, Math.max(0, pickable.length - 1));
     const sel = pickable[this.at];
+    // ↑↓ move `at` whether or not that row is on screen. This request is made during render,
+    // so no notify is needed: it is consumed after layout.
+    if (this.at !== this.scrolled) {
+      this.scrolled = this.at;
+      const index = rows.indexOf(sel);
+      if (index >= 0) this.scroll.scroll_to_item(index);
+    }
     const height = Math.min(LIST_MAX, rows.length * ROW_H);
 
     const rowId = (r) =>
@@ -159,7 +168,7 @@ export default class Jump extends View {
       .child(h_flex().h(36).flex_none().px(10).gap(8).items_center().rounded(9).border_1().border_color(t.accent).bg(t.background)
         .child(Input.new(this.input).flex_1().h_full().text_size(12.8).text_color(t.foreground)))
       .when(rows.length > 0, (el) => el.child(
-        div().id("jump-list").h(height).flex_none().min_h(0).overflow_y_scrollbar().children(rows.map((r) => row(r)))))
+        div().id("jump-list").h(height).flex_none().min_h(0).overflow_y_scrollbar().track_scroll(this.scroll).children(rows.map((r) => row(r)))))
       .when(rows.length === 0, (el) => el.child(div().py(20).text_size(12).text_color(t.dim).child("Nothing matches")))
       .child(h_flex().gap(14).items_center().text_size(11).text_color(t.dim)
         .child(div().child("↑↓ move · Enter go · Esc close"))
