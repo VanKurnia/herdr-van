@@ -242,14 +242,6 @@ export default class Agents {
     list = [...pinned, ...rest];
     setAgentOrder(list.map((a) => a.address));
 
-    const withKids = (a, i) => {
-      const subs = collapsed ? [] : this.tree(kidsOf, a.address);
-      const r = row(a, i, subs);
-      const kids = this.folded.has(a.address) ? [] : subs;
-      // `who[k]` is the agent the k-th row stands for: the agent itself, then one per sub-agent.
-      return { els: [r, ...kids.map((s) => this.subRow(t, s, shown, byPriority))], who: [a.address, ...kids.map((s) => s.t.address)] };
-    };
-
     // The fold chevron; folded, the count too, colored by the most urgent one.
     const fold = (a, subs) => {
       const sts = subs.map((s) => kidStatus(s.t, this.listed));
@@ -406,16 +398,22 @@ export default class Agents {
           .child(svg("mods/herdr-van/icons/chevron-right.svg").size(11).flex_none().text_color(t.dim)));
     };
     const rows = [];
-    const rowOf = []; // the agent each row stands for; null for a group header
-    const add = ({ els, who }) => { els.forEach((el, k) => { rows.push(el); rowOf.push(who[k]); }); };
-    if (collapsed) list.forEach((a, i) => add(withKids(a, i)));
+    let at = -1; // the row the focused agent itself stands on — a sub-agent has one of its own
+    const add = (a, i) => {
+      const subs = collapsed ? [] : this.tree(kidsOf, a.address);
+      if (at < 0 && a.address === shown) at = rows.length;
+      rows.push(row(a, i, subs));
+      if (this.folded.has(a.address)) return;
+      for (const s of subs) {
+        if (at < 0 && s.t.address === shown) at = rows.length;
+        rows.push(this.subRow(t, s, shown, byPriority));
+      }
+    };
+    if (collapsed) list.forEach(add);
     else for (const g of groups) {
       rows.push(header(g));
-      rowOf.push(null);
-      if (!this.folded.has(g.id)) g.members.forEach((a, i) => add(withKids(a, i)));
+      if (!this.folded.has(g.id)) g.members.forEach(add);
     }
-    // The focused agent's own row, which may be a sub-agent's.
-    const at = rowOf.indexOf(shown);
     if (at >= 0 && at !== this.scrolled) {
       this.scrolled = at;
       this.scroll.scroll_to_item(at);

@@ -56,6 +56,9 @@ function languageOf(path) {
 // Text draws a tab as nothing: pad each one out to the next 4-column stop.
 const untab = (text) => text.replace(/[^\t]*\t/g, (s) => s.slice(0, -1).padEnd((s.length - 1) - (s.length - 1) % 4 + 4));
 
+// An unwrapped row's height, which its elements and the virtual list that places them share.
+const ROW_H = 18;
+
 // Rows of a unified patch. Header noise (Index:, ===, ---, +++) is dropped — the File list
 // already names the file — and so is the marker character: the tint says what it said.
 function diffRows(patch) {
@@ -505,7 +508,7 @@ export default class HerdrFileChanges extends View {
   diffRow(row, t) {
     const wrap = this.wrap;
     const line = (text) => div().flex_none().px(8).py(2).text_size(11).text_color(t.dim)
-      .when(wrap, (e) => e.whitespace_normal()).when(!wrap, (e) => e.h(18).truncate()).child(text);
+      .when(wrap, (e) => e.whitespace_normal()).when(!wrap, (e) => e.h(ROW_H).truncate()).child(text);
     if (row.kind === "@") return line(row.text).bg(t.raised);
     if (row.kind === "meta") return line(row.text);
     const tint = row.kind === "+" ? t.ansi2 + "18" : row.kind === "-" ? t.ansi1 + "18" : null;
@@ -514,7 +517,7 @@ export default class HerdrFileChanges extends View {
     // a box of its own. Wrapped, those boxes are words and the row's flex breaks between them;
     // unwrapped, they stay on one line and truncate.
     return h_flex().flex_none().px(6).gap(6).when(Boolean(tint), (e) => e.bg(tint))
-      .when(wrap, (e) => e.items_start().py(2)).when(!wrap, (e) => e.items_center().h(18))
+      .when(wrap, (e) => e.items_start().py(2)).when(!wrap, (e) => e.items_center().h(ROW_H))
       .child(div().w(30).flex_none().text_right().text_size(10.5).text_color(t.dim)
         .child(row.number === undefined ? "" : String(row.number)))
       .child(h_flex().flex_1().min_w(0).gap(0).text_size(11)
@@ -611,14 +614,14 @@ export default class HerdrFileChanges extends View {
 
     const codeBody = div().flex_1().min_h(0)
       .when(this.mode === "diff" && this.rows.length > 0, (e) => e.child(
-        // Unwrapped rows are a fixed 18 px, so the list builds only what is on screen. Wrapped
-        // rows are as tall as their text, which a fixed-size list cannot place: that mode keeps
+        // Unwrapped rows are ROW_H tall, so the list builds only what is on screen. Wrapped rows
+        // are as tall as their text, which a fixed-size list cannot place: that mode keeps
         // building every row and paints its own bar.
         this.wrap
           ? v_flex().id("pi-diff").size_full().min_h(0).overflow_y_scrollbar()
             .children(this.rows.map((row) => this.diffRow(row, t)))
           : div().size_full().min_h(0).relative()
-            .child(v_virtual_list("pi-diff", this.rows.length, 18, (i) => String(i),
+            .child(v_virtual_list("pi-diff", this.rows.length, ROW_H, (i) => String(i),
               (range) => this.rows.slice(range.start, range.end).map((row) => this.diffRow(row, t))).size_full())
             .child(Scrollbar.vertical("pi-diff").absolute().inset_0())))
       .when(this.mode === "file" && Boolean(editor), (e) => e.child(Editor.new(editor)))

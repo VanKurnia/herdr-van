@@ -21,8 +21,8 @@ export default class Tabs {
     const t = theme();
     const space = spaces().find(p => p.active);
     const shown = space?.tabs ?? [];
-    // ctrl+tab, ctrl+1…9, a click on a space and a window resize all switch tabs without moving
-    // the bar. Both the id and the index are compared: a space switch can keep the index.
+    // The active tab can change without the bar moving. Its id and its index are both compared:
+    // a space switch can change one without the other.
     const active = shown.findIndex((c) => c.active);
     const selectedTab = shown[active]?.id;
     if (selectedTab !== this.selected || active !== this.selectedIndex) {
@@ -30,6 +30,13 @@ export default class Tabs {
       this.selectedIndex = active;
       if (active >= 0) this.scroll.scroll_to_item(active);
     }
+    // A rename, a status glyph, a window resize or a sidebar fold can push the active tab out
+    // without changing which tab is active: ask again whenever a size settles.
+    const reveal = (_size, cx) => {
+      if (active < 0) return;
+      this.scroll.scroll_to_item(active);
+      cx.notify();
+    };
     const ps = panes();
     // Square hover blocks, full bar height, like the tabs beside them: the width
     // follows the height, so the block stays square whatever the bar's height is.
@@ -51,8 +58,7 @@ export default class Tabs {
           else run("tab.select", { id: c.id });
         })
         .on_mouse_down("right", () => openOverlay({ mod: "menu", kind: "popup", width: 200, props: { tab: "tab", target: { id: c.id, space: space.id } } }))
-        // A rename or status glyph on this or an earlier tab can push the active one out.
-        .when(i <= active, (el) => el.on_size_change((_size, cx) => { this.scroll.scroll_to_item(active); cx.notify(); }))
+        .when(i <= active, (el) => el.on_size_change(reveal))
         .when(Boolean(program?.icon), el => el.child(program.tint ? svg(program.icon).size(14).text_color(t.muted) : image(program.icon).size(14)))
         .child(div().max_w(170).truncate().child(c.zoomed ? `${name} Z` : name))
         .when(c.status === "working", el => el.child(svg("mods/herdr-van/icons/spinner.svg").size(12).flex_none().text_color(t.working).spin(900)))
@@ -78,8 +84,7 @@ export default class Tabs {
       .on_mouse_up("left", () => { this.pressed = null; })
       .on_scroll_wheel(e => { if (Math.abs(e.delta.y) >= 1) run(e.delta.y > 0 ? "tab.prev" : "tab.next"); })
       .child(h_flex().id("tab-scroll").flex_1().min_w(0).h_full().items_center().overflow_x_scrollbar().track_scroll(this.scroll)
-        // A window resize or a sidebar fold changes the bar's width without any tab resizing.
-        .on_size_change((_size, cx) => { if (active >= 0) { this.scroll.scroll_to_item(active); cx.notify(); } })
+        .on_size_change(reveal)
         .children(shown.map(item))
         .when(this.onBar, el => el.child(button("tab-new", "+", () => openOverlay({ mod: "new-menu", kind: "popup", width: 250, height: 512 })))))
       .when(this.onBar && Boolean(w?.buttons), el => el.child(button("close-window", closeIcon, () => run("window.close"))));
