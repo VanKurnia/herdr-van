@@ -75,11 +75,13 @@ export function spaceFill(t, s) {
   return color.startsWith("#") ? color : (MARK[color] ?? t[color]);
 }
 
-// The 24px tile a space is drawn with: its colour and initial, or its icon —
-// an icon stands alone, so the colour only marks the spaces that carry a letter.
-export const avatar = (fill, name, ink, icon) => h_flex().size(24).flex_none().rounded(6).items_center().justify_center()
-  .when(Boolean(icon), (el) => el.child(image(icon).w(22).h(22).flex_none()))
-  .when(!icon, (el) => el.bg(fill).child(div().text_size(13).font_bold().text_color(ink).child([...name][0]?.toUpperCase() ?? "?")));
+// The tile a space is drawn with: its colour and initial, or its icon — an icon
+// stands alone, so the colour only marks the spaces that carry a letter. `size`
+// lets a row with a second line grow the tile to fill both, the corner and the
+// letter scaling with it, so the rail still reads as one column of tiles.
+export const avatar = (fill, name, ink, icon, size = 24) => h_flex().size(size).flex_none().rounded(size >= 30 ? 8 : 6).items_center().justify_center()
+  .when(Boolean(icon), (el) => el.child(image(icon).w(size - 2).h(size - 2).flex_none()))
+  .when(!icon, (el) => el.bg(fill).child(div().text_size(Math.round(size * 0.54)).font_bold().text_color(ink).child([...name][0]?.toUpperCase() ?? "?")));
 
 // Where a space is now: the folder of the pane it shows, else any pane in its
 // tabs, else where it was made. `ps` is panes(), read once by the caller.

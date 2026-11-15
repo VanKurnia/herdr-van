@@ -1,6 +1,7 @@
 // Workspace spaces: stable colored avatars, worktrees under their checkout,
-// grouped by machine when more than one is known. After a space's name, the repo
-// its first terminal is in now, only where unusual: branch, ahead/behind. Agent state lives in the agents list, not here. Click to
+// grouped by machine when more than one is known. Under a space's name, on its own
+// line, the repo its first terminal is in now, only where unusual: branch,
+// ahead/behind. Agent state lives in the agents list, not here. Click to
 // switch, right-click for its menu, drag to reorder.
 
 import { div, svg } from "gpui-kit";
@@ -317,20 +318,20 @@ export default class Spaces {
     });
   }
 
-  // Only what's unusual, after the name: "herdr \u00b7 spike \u21912 \u21931". The repo or
-  // branch goes when the name already says it (a worktree is named after its branch),
-  // and master/main go: nearly every space is on one.
-  gitTail(g, tree, name, t) {
+  // The row's second line, only what's unusual: "herdr \u00b7 spike \u21912 \u21931". The repo
+  // or branch goes when the name already says it (a worktree is named after its
+  // branch), and master/main go: nearly every space is on one. Null when nothing is
+  // left — the row still reserves the line, it just stays empty.
+  gitLine(g, tree, name, t) {
     const raw = g.branch ?? "detached";
     const same = (a) => a.toLowerCase() === name.toLowerCase();
     const branch = same(raw) || raw === "master" || raw === "main" ? "" : raw;
     const repo = tree || same(g.name) ? "" : g.name;
     const where = [repo, branch].filter(Boolean).join(" \u00b7 ");
+    if (!where && !g.ahead && !g.behind) return null;
     return h_flex()
-      .flex_1()
       .min_w(0)
       .gap(5)
-      .justify_end()
       .items_center()
       .text_size(11.5)
       .text_color(t.dim)
@@ -343,11 +344,17 @@ export default class Spaces {
     const on = w.active;
     const fill = spaceFill(t, w);
     const rec = this.records.get(w.id);
+    const tail = g ? this.gitLine(g, tree, w.name, t) : null;
+    // Every row is the same height and the same tile: the second line is reserved
+    // even when there is nothing to say there, so the sidebar reads as one column
+    // of tiles and no row resizes when git answers. The name and the git line share
+    // a column beside the tile, so the tail lines up under the name by construction.
+    const tile = 32;
     return v_flex()
       .relative()
       .id(`space-${w.id}`)
       .px(8)
-      .h(tree ? 28 : 30)
+      .h(42)
       .flex_none()
       .justify_center()
       .rounded(8)
@@ -383,17 +390,35 @@ export default class Spaces {
         h_flex()
           .gap(9)
           .items_center()
-          .when(Boolean(tree), el => el.pl(22).child(svg("mods/herdr-van/icons/branch.svg").size(13).text_color(t.dim)))
-          .when(!tree, el => el.child(avatar(fill, w.name, "#ffffff", rec?.icon)))
-          .child(div().flex_shrink(0).max_w(150).truncate().text_color(t.foreground).child(w.name))
-          .child(g ? this.gitTail(g, tree, w.name, t) : div().flex_1())
-          .when(this.hoverRow === `space-${w.id}`, el => el.child(
-            h_flex().gap(2).items_center()
-              .child(rowButton(t, `space-icon-${w.id}`, "square-pen", "Icon", (cx) =>
-                this.pickIcon({ space: w.id, record: rec?.id, name: w.name, icon: rec?.icon, fill }, cx)))
-              .child(rowButton(t, `space-save-${w.id}`, "layers", "Save as workspace", (cx) => { this.saveLive(w.id); this.clearHover(cx); }))
-              .when((shared(MODE) ?? "active") === "all", row => row.child(
-                rowButton(t, `space-unload-${w.id}`, "close", "Unload (keeps it in Saved)", (cx) => { this.unload(w); this.clearHover(cx); }))))),
+          .when(Boolean(tree), el => el.pl(22).child(svg("mods/herdr-van/icons/branch.svg").size(14).text_color(t.dim)))
+          .when(!tree, el => el.child(avatar(fill, w.name, "#ffffff", rec?.icon, tile)))
+          .child(
+            v_flex()
+              .flex_1()
+              .min_w(0)
+              .gap(1)
+              .justify_center()
+              // The hover buttons ride on the name's line and take their room out of the
+              // name, never out of the git line below it. That line keeps its height when
+              // they appear (18px, the buttons' size rather than the text's), so hovering
+              // moves nothing but the name's truncation.
+              .child(
+                h_flex()
+                  .h(18)
+                  .min_w(0)
+                  .gap(4)
+                  .items_center()
+                  .child(div().flex_1().min_w(0).truncate().text_color(t.foreground).child(w.name))
+                  .when(this.hoverRow === `space-${w.id}`, el => el.child(
+                    h_flex().gap(2).items_center()
+                      .child(rowButton(t, `space-icon-${w.id}`, "square-pen", "Icon", (cx) =>
+                        this.pickIcon({ space: w.id, record: rec?.id, name: w.name, icon: rec?.icon, fill }, cx)))
+                      .child(rowButton(t, `space-save-${w.id}`, "layers", "Save as workspace", (cx) => { this.saveLive(w.id); this.clearHover(cx); }))
+                      .when((shared(MODE) ?? "active") === "all", row => row.child(
+                        rowButton(t, `space-unload-${w.id}`, "close", "Unload (keeps it in Saved)", (cx) => { this.unload(w); this.clearHover(cx); }))))))
+              // The line is always there, empty when git has nothing to add: the same
+              // 15px whether it holds text or not, so the name never shifts.
+              .child(tail ?? div().h(15))),
       );
   }
 
@@ -426,8 +451,10 @@ export default class Spaces {
       const term = this.live?.get(rec.address);
       const pic = icon(term?.program, 14, t.foreground);
       // The outcome is a mark, not a word: a run in flight, one that finished, one
-      // the person stopped, and a failure. The exit code rides in the tooltip.
-      const [glyph, color] = term ? ["play", t.ansi2]
+      // the person stopped, and a failure. The exit code rides in the tooltip. A run in
+      // flight wears the same spinner the agents list uses, so "working" looks the same
+      // wherever it appears; the rest are still glyphs.
+      const [glyph, color] = term ? [null, t.working]
         : rec.ended?.reason === "killed" ? ["square", t.ansi3]
         : rec.ended?.code ? ["x", t.ansi1]
         : rec.ended || rec.address ? ["check", t.dim]
@@ -440,7 +467,8 @@ export default class Spaces {
         .child(div().self_start().mt(-4).w(9).h(17).mr(4).flex_none().border_l(1.5).border_color(t.input).border_b(1.5).rounded_bl(6))
         .when(Boolean(pic), (el) => el.child(div().mr(8).child(pic)))
         .child(div().flex_1().truncate().text_color(t.muted).child(rec.name))
-        .child(svg(`mods/herdr-van/icons/${glyph}.svg`).size(13).flex_none().text_color(color))
+        .when(term, (el) => el.child(svg("mods/herdr-van/icons/spinner.svg").size(12).flex_none().text_color(color).spin(900)))
+        .when(!term, (el) => el.child(svg(`mods/herdr-van/icons/${glyph}.svg`).size(13).flex_none().text_color(color)))
         .when(this.hoverRow === `runner-${rec.id}`, (el) => el.child(h_flex().gap(2).items_center()
           .child(rowButton(t, `runner-rename-${rec.id}`, "square-pen", "Rename", (cx) => {
             openOverlay({ mod: "herdr-van", props: { part: "runner", space: w.id, id: rec.id }, kind: "dialog", width: 380, frame: "none" });
