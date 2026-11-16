@@ -265,7 +265,10 @@ async function build(cx, rec, before) {
     let tab = find();
     if (!tab) {
       // Tab 1 arrives with the space; the rest are created here.
-      run("tab.new", { name: want.named ? want.name : undefined, space: spaceId, folder: startFolder({ tabs: [want] }) });
+      // Built without the keyboard: each new tab would otherwise take the focus and flash the
+      // window through the restore. The final tab.select below picks the recorded active tab, and
+      // buildTree targets panes by id, never by focus.
+      run("tab.new", { name: want.named ? want.name : undefined, space: spaceId, folder: startFolder({ tabs: [want] }), focus: false });
       tab = await until(cx, find);
       if (!tab) throw new Error(`tab ${i + 1} never appeared`);
     } else if (want.named && tab.name !== want.name) {

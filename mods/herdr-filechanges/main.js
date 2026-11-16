@@ -25,6 +25,14 @@ const shortPath = (path) => {
   return h && path.startsWith(h + "/") ? "~" + path.slice(h.length) : path;
 };
 
+// Where a row's file really is: pi reports a path relative to its own cwd, or an absolute one
+// outside it. One place, so a drag and a read of the same file cannot disagree.
+const fileTarget = (file, snapshots) => {
+  const absolute = file.path.charAt(0) === "/" || file.path.charAt(1) === ":";
+  const cwd = snapshots[file.owner]?.cwd ?? "";
+  return { path: absolute ? file.path : (cwd + "/" + file.path).replace(/\\/g, "/"), on: splitAddress(file.owner).on };
+};
+
 // pi knows two kinds; herdr-van has no letter badges, so these are small flat chips.
 const KIND = { new: { label: "A", color: "ansi2" }, edited: { label: "M", color: "accent" } };
 const kindOf = (f) => KIND[f.kind] ?? KIND.edited;
@@ -302,10 +310,7 @@ export default class HerdrFileChanges extends View {
   /** The current file, for "file" mode: pi's absolute path is readable in the home folder. */
   loadFile(file, cx) {
     if (this.codeShut || !file || (this.fileText && this.fileText.path === file.path)) return;
-    const absolute = file.path.charAt(0) === "/" || file.path.charAt(1) === ":";
-    const cwd = this.snapshots[file.owner]?.cwd ?? "";
-    const path = absolute ? file.path : (cwd + "/" + file.path).replace(/\\/g, "/");
-    const on = splitAddress(file.owner).on;
+    const { path, on } = fileTarget(file, this.snapshots);
     this.fileText = { path: file.path, text: null, reading: true };
     cx.spawn(async (cx) => {
       const text = await readTextFile(path, { on }).catch(() => null);
@@ -455,9 +460,11 @@ export default class HerdrFileChanges extends View {
     const tone = t[kind.color] ?? t.muted;
     const parts = shortPath(f.path).split("/"), name = parts.pop();
     const on = this.open === f.path;
+    const target = fileTarget(f, this.snapshots);
     return h_flex().id(`pi-change-${f.path}`).h(FILE_ROW).flex_none().pl(6).pr(6).gap(6).items_center().rounded(6).text_size(12)
       .cursor_pointer().hover((s) => s.bg(t.hover)).when(on, (e) => e.bg(t.selected))
       .on_click((_e, cx) => this.pick(f.path, cx))
+      .drag_paths([target.path], { on: target.on })
       .when(depth > 0, (e) => e.child(this.guides(t, depth, FILE_ROW)))
       .child(div().w(16).h(16).flex_none().flex().items_center().justify_center().rounded(4)
         .bg(tone + "22").text_size(9.5).font_semibold().text_color(tone).child(kind.label))
