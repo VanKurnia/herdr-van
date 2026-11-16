@@ -64,7 +64,10 @@ export default class Spaces {
     this.over = null;
     this.hoverRow = null;
     this.machines = [];
-    this.folded = new Set(JSON.parse(localStorage.getItem("machines.folded") ?? "[]"));
+    // A damaged value is dropped rather than thrown: losing the folded machines is cheap, losing
+    // the sidebar is not.
+    try { this.folded = new Set(JSON.parse(localStorage.getItem("machines.folded") ?? "[]")); } catch { this.folded = new Set(); }
+    if (!(this.folded instanceof Set)) this.folded = new Set();
     this.refreshMachines(cx);
     cx.timer.every(15000, cx => this.refreshMachines(cx));
     // Whatever `due` waits for needs no faster tick than this; the rest is event-driven.

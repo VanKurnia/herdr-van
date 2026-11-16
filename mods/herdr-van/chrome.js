@@ -1,6 +1,6 @@
 import { div, svg } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
-import { theme, run, props, window, updates, exec, readTextFile, watchFolder, appHome, shared, setShared } from "herdr";
+import { theme, run, props, window, updates, exec, readTextFile, watchFolder, appHome, shared, setShared, checking } from "herdr";
 import { claimSidebarHover, findBlock, narrow, onSidebar, toggleSidebar } from "./lib.js";
 
 // ── Brand config ─────────────────────────────────────────────
@@ -21,6 +21,8 @@ export default class Chrome {
     // and the symlink probe belong to that part alone.
     this.brandUser = null; // null = resolving (shows fallback), or unresolvable
     this.brandFixed = "";
+    // A check loads and draws the mod; it must not run `whoami` or ask powershell about a symlink.
+    if (checking()) return;
     cx.spawn(async (cx) => {
       try {
         const r = await exec("whoami");

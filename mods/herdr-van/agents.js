@@ -59,10 +59,13 @@ export default class Agents {
     this.folded = new Set();
     this.scroll = ScrollHandle.new();
     this.scrolled = null; // the row last revealed
-    // Each agent's last state and when it changed (ms), kept across restarts.
-    this.changed = JSON.parse(localStorage.getItem("changed") ?? "{}");
+    // Each agent's last state and when it changed (ms), kept across restarts. A damaged value is
+    // dropped rather than thrown: losing the ages is cheap, losing the list is not.
+    try { this.changed = JSON.parse(localStorage.getItem("changed") ?? "{}"); } catch { this.changed = {}; }
+    if (!this.changed || typeof this.changed !== "object" || Array.isArray(this.changed)) this.changed = {};
     // Pins used to live here; `adoptPins` hands them to the terminals that still exist.
-    this.pendingPins = JSON.parse(localStorage.getItem("pins") ?? "[]");
+    try { this.pendingPins = JSON.parse(localStorage.getItem("pins") ?? "[]"); } catch { this.pendingPins = []; }
+    if (!Array.isArray(this.pendingPins)) this.pendingPins = [];
     cx.timer.every(30000, (cx) => cx.notify());
   }
 
