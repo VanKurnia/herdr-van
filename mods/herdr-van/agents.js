@@ -6,7 +6,10 @@ import { v_flex, h_flex, ScrollHandle } from "gpui-base";
 import { agents, terminals, panes, focused, spaces, run, theme, shared, setShared, setAgentOrder, openOverlay, closeOverlay, props } from "herdr";
 import { claimSidebarHover, narrow, icon, menuCard } from "./lib.js";
 
-const clean = (s) => (s ?? "").replace(/^[^\p{L}\p{N}]+/u, "").trim();
+// Drops what an agent puts before its title: a status glyph or spinner and the separator
+// after it ("✦  Working", "⠋ - Thinking"), and Codex's blinking "[ ! ] " / "[ . ] " mark.
+// Stops at an opening bracket or quote, so a title that starts with one ("[web] login") keeps it.
+const clean = (s) => (s ?? "").replace(/^[^\p{L}\p{N}\p{Ps}\p{Pi}]+/u, "").replace(/^\[ [!.] \] /, "").trim();
 
 // The pane whose title speaks for a tab: its agent, else the focused one, else the first.
 function lead(mine) {
@@ -18,7 +21,7 @@ function title(tab, l) {
   const live = clean(l?.title);
   // `clean` would strip a path's leading ~ or /: test the title with only its status glyph gone.
   const path = /^[~/]|^[A-Za-z]:\\/.test((l?.title ?? "").replace(/^[^\p{L}\p{N}~/]+/u, ""));
-  const telling = live && live !== prog && !path && !live.includes("@") && live.toLowerCase() !== l?.program?.key;
+  const telling = live && live !== (l?.terminal ?? l?.address) && live !== prog && !path && !live.includes("@") && live.toLowerCase() !== l?.program?.key;
   return tab.name === prog && telling ? live : tab.name;
 }
 const RANK = { blocked: 4, done: 3, working: 2, idle: 1 };
@@ -180,7 +183,7 @@ export default class Agents {
       .text_size(12.5)
       .when(on, (el) => el.bg(t.raised))
       .hover((s) => s.bg(t.hover))
-      .on_click(() => run("terminal.peek", { terminal: k.address }))
+      .on_click(() => (this.listed.has(k.address) ? run("pane.focus", { pane: agents().find((a) => a.address === k.address)?.pane }) : run("terminal.peek", { terminal: k.address })))
       .on_mouse_down("right", (_e, cx) => { cx.stop_propagation(); this.menu(k.address); })
       .children(s.lines.map(l => div().self_start().mt(-4).w(9).h(17).mr(4).flex_none()
         .when(Boolean(l), el => el.border_l(1.5).border_color(t.input))
@@ -225,6 +228,13 @@ export default class Agents {
       if (kids) kids.push(k);
       else kidsOf.set(k.parent, [k]);
     }
+
+    // A kept sub-agent (one with a pane) is in agents() too: where a tree shows it, it gets no
+    // row of its own, unless it's pinned.
+    const nested = new Set(collapsed ? [] : list.flatMap((a) => this.tree(kidsOf, a.address).map((s) => s.t.address)));
+    list = list.filter((a) => a.pinned || !nested.has(a.address));
+    const tabCounts = new Map();
+    for (const a of list) tabCounts.set(a.tab, (tabCounts.get(a.tab) ?? 0) + 1);
     const panesByTab = new Map();
     for (const p of ps) {
       if (!p.terminal || !p.tab) continue;
@@ -271,9 +281,15 @@ export default class Agents {
     // A row reads "space \u00b7 detail": the detail is a tab someone named or the
     // agent's own title, never an automatic tab number unless two rows would
     // otherwise read the same.
-    // A tab's title, once: `title` needs the tab's lead pane, and both are per tab.
-    const titles = new Map(tabs.map((tab) => [tab.id, title(tab, lead(panesByTab.get(tab.id) ?? []))]));
-    const label = (a) => (titles.has(a.tab) ? titles.get(a.tab) : a.title || a.program?.name || "");
+    // A tab's own title speaks for its row only when the tab holds one agent; with two, each row
+    // is named after the agent it stands for, or both would read the same.
+    const tabsById = new Map(tabs.map((tab) => [tab.id, tab]));
+    const label = (a) => {
+      const tab = tabsById.get(a.tab);
+      if (!tab) return a.title || a.program?.name || "";
+      const many = (tabCounts.get(a.tab) ?? 0) > 1;
+      return title(many ? { ...tab, named: false } : tab, many ? a : lead(panesByTab.get(a.tab) ?? []));
+    };
     const labels = new Map(list.map((a) => [a.address, label(a)]));
     const detail = new Map(list.map((a) => [a.address, /^\d+$/.test(labels.get(a.address)) ? null : labels.get(a.address)]));
     const seen = {};
