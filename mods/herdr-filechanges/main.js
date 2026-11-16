@@ -25,7 +25,7 @@ const shortPath = (path) => {
   return h && path.startsWith(h + "/") ? "~" + path.slice(h.length) : path;
 };
 
-// Where a row's file really is: pi reports a path relative to its own cwd, or an absolute one
+// Where a row's file is on disk: pi reports a path relative to its own cwd, or an absolute one
 // outside it. One place, so a drag and a read of the same file cannot disagree.
 const fileTarget = (file, snapshots) => {
   const absolute = file.path.charAt(0) === "/" || file.path.charAt(1) === ":";

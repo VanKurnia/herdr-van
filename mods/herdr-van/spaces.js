@@ -33,14 +33,6 @@ const SETTLE = 1500;
 // machine core's 16 running execs, and those spaces wait for FALLBACK.
 const AT_ONCE = 6;
 
-// Both runs of a pair, finished: a place isn't done while one of its runs still holds a slot.
-async function both(a, b) {
-  const done = await Promise.allSettled([a, b]);
-  const failed = done.find((d) => d.status === "rejected");
-  if (failed) throw failed.reason;
-  return done.map((d) => d.value);
-}
-
 export default class Spaces {
   init(_props, cx) {
     this.git = {}; // where() -> { name, branch, ahead, behind, repo, linked }, null: not a repo
@@ -67,7 +59,6 @@ export default class Spaces {
     // A damaged value is dropped rather than thrown: losing the folded machines is cheap, losing
     // the sidebar is not.
     try { this.folded = new Set(JSON.parse(localStorage.getItem("machines.folded") ?? "[]")); } catch { this.folded = new Set(); }
-    if (!(this.folded instanceof Set)) this.folded = new Set();
     this.refreshMachines(cx);
     cx.timer.every(15000, cx => this.refreshMachines(cx));
     // Whatever `due` waits for needs no faster tick than this; the rest is event-driven.
@@ -229,18 +220,12 @@ export default class Spaces {
     try {
       // All four in one round: none of them needs another's answer. A folder name may itself
       // contain a newline, so strip the trailing one rather than trimming.
-      const [first, rest] = await Promise.all([
-        both(
-          exec("git", ["rev-parse", "--path-format=absolute", "--show-toplevel"], { cwd, on }),
-          exec("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], { cwd, on }),
-        ),
-        both(
-          exec("git", ["symbolic-ref", "-q", "HEAD"], { cwd, on }),
-          exec("git", ["rev-list", "--left-right", "--count", "HEAD...@{upstream}"], { cwd, on }),
-        ),
+      const [top, common, head, counts] = await Promise.all([
+        exec("git", ["rev-parse", "--path-format=absolute", "--show-toplevel"], { cwd, on }),
+        exec("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], { cwd, on }),
+        exec("git", ["symbolic-ref", "-q", "HEAD"], { cwd, on }),
+        exec("git", ["rev-list", "--left-right", "--count", "HEAD...@{upstream}"], { cwd, on }),
       ]);
-      const [top, common] = first;
-      const [head, counts] = rest;
       if (top.code !== 0 || common.code !== 0) {
         // Only git's own "no" is remembered as no repo; anything else is asked again, and the
         // answer it already had stays instead of being replaced by "no".
@@ -290,8 +275,10 @@ export default class Spaces {
           current = watchFolder(repo);
           this.watching.set(repo, current);
         }
-      } catch { /* the watcher ends with the copy or the machine */ }
-      if (this.watching.get(repo) === current) this.watching.delete(repo);
+      } catch {
+        // The watcher ends with the copy, the machine, or the folder-watch limit.
+        if (this.watching.get(repo) === current) this.watching.delete(repo);
+      }
     });
   }
 

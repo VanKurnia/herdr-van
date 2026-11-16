@@ -6,9 +6,8 @@ import { v_flex, h_flex, ScrollHandle } from "gpui-base";
 import { agents, terminals, panes, focused, spaces, run, theme, shared, setShared, setAgentOrder, openOverlay, closeOverlay, props } from "herdr";
 import { claimSidebarHover, narrow, icon, menuCard } from "./lib.js";
 
-// Drops what an agent puts before its title: a status glyph or spinner and the separator
-// after it ("✦  Working", "⠋ - Thinking"), and Codex's blinking "[ ! ] " / "[ . ] " mark.
-// Stops at an opening bracket or quote, so a title that starts with one ("[web] login") keeps it.
+// Drops the status glyph, spinner and separator an agent puts before its title, and Codex's
+// `[ ! ]` mark; stops at an opening bracket so a bracketed title keeps it.
 const clean = (s) => (s ?? "").replace(/^[^\p{L}\p{N}\p{Ps}\p{Pi}]+/u, "").replace(/^\[ [!.] \] /, "").trim();
 
 // The pane whose title speaks for a tab: its agent, else the focused one, else the first.
@@ -169,6 +168,14 @@ export default class Agents {
     });
   }
 
+  // A sub-agent that is also an agent (it was given a pane) is focused where it runs; one that
+  // only reports to its parent is peeked at.
+  open(address) {
+    const agent = agents().find((a) => a.address === address);
+    if (agent) run("pane.focus", { pane: agent.pane });
+    else run("terminal.peek", { terminal: address });
+  }
+
   subRow(t, s, shown, compact) {
     const k = s.t;
     const st = kidStatus(k, this.listed);
@@ -186,7 +193,7 @@ export default class Agents {
       .text_size(12.5)
       .when(on, (el) => el.bg(t.raised))
       .hover((s) => s.bg(t.hover))
-      .on_click(() => (this.listed.has(k.address) ? run("pane.focus", { pane: agents().find((a) => a.address === k.address)?.pane }) : run("terminal.peek", { terminal: k.address })))
+      .on_click(() => this.open(k.address))
       .on_mouse_down("right", (_e, cx) => { cx.stop_propagation(); this.menu(k.address); })
       .children(s.lines.map(l => div().self_start().mt(-4).w(9).h(17).mr(4).flex_none()
         .when(Boolean(l), el => el.border_l(1.5).border_color(t.input))
@@ -245,7 +252,7 @@ export default class Agents {
       if (mine) mine.push(p);
       else panesByTab.set(p.tab, [p]);
     }
-    const tabs = spaces().flatMap((s) => s.tabs);
+    const tabsById = new Map(spaces().flatMap((s) => s.tabs).map((tab) => [tab.id, tab]));
     const urgency = new Map(list.map((a) => [a.address, Math.max(this.rank(a), ...this.tree(kidsOf, a.address).map((s) => RANK[kidStatus(s.t, this.listed)] ?? 0))]));
     const rankOf = (a) => urgency.get(a.address);
     if (byPriority) list = [...list].sort((x, y) => rankOf(y) - rankOf(x) || this.since(y) - this.since(x) || y.seq - x.seq);
@@ -281,12 +288,10 @@ export default class Agents {
         .when(!open, (el) => el.child(String(subs.length)));
     };
 
-    // A row reads "space \u00b7 detail": the detail is a tab someone named or the
-    // agent's own title, never an automatic tab number unless two rows would
-    // otherwise read the same.
-    // A tab's own title speaks for its row only when the tab holds one agent; with two, each row
-    // is named after the agent it stands for, or both would read the same.
-    const tabsById = new Map(tabs.map((tab) => [tab.id, tab]));
+    // A row reads "space \u00b7 detail": the detail is a tab someone named or the agent's own
+    // title, never an automatic tab number unless two rows would otherwise read the same. A tab's
+    // title speaks for its row only while the tab holds one agent; with two, each row is named
+    // after the agent it stands for.
     const label = (a) => {
       const tab = tabsById.get(a.tab);
       if (!tab) return a.title || a.program?.name || "";
