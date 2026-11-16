@@ -50,7 +50,7 @@ export default class Spaces {
     this.busy = {}; // pane -> an agent working or a program in front of its shell
     this.ready = {}; // machine -> its layout was readable at the last look
     this.at = {}; // space -> its where() at the last look
-    this.watching = new Set(); // local repos' git folders
+    this.watching = new Map(); // repo -> its pending folder watch (cancel it to release the slot)
     this.dirty = {}; // repo -> when a watcher last saw a write
     // Spaces made while this runs wait (at most a moment) for their git, so a
     // worktree appears under its repo instead of jumping there.
@@ -207,7 +207,11 @@ export default class Spaces {
         }));
       }
       const used = new Set(Object.values(this.git).filter(Boolean).map((g) => JSON.parse(g.repo)).filter(([on]) => !on).map(([, repo]) => repo));
-      for (const repo of this.watching) if (!used.has(repo)) this.watching.delete(repo);
+      for (const [repo, pending] of this.watching) if (!used.has(repo)) {
+        this.watching.delete(repo);
+        pending.cancel();
+        delete this.dirty[repo];
+      }
       this.refreshing = false;
       cx.notify();
     });
@@ -268,18 +272,23 @@ export default class Spaces {
 
   watch(repo, cx) {
     if (this.watching.has(repo)) return;
-    this.watching.add(repo);
+    const pending = watchFolder(repo);
+    this.watching.set(repo, pending);
     cx.spawn(async () => {
+      let current = pending;
       try {
-        while (this.watching.has(repo)) {
-          await watchFolder(repo);
+        for (;;) {
+          await current;
+          // Cancelled, or replaced by a newer watch: this loop is not the one that owns the repo.
+          if (this.watching.get(repo) !== current) return;
           // Noted, not acted on: `due` looks once the burst settles (SETTLE).
-          if (this.watching.has(repo)) this.dirty[repo] = Date.now();
+          this.dirty[repo] = Date.now();
+          // Still wanted: arm the next watch before giving up this one.
+          current = watchFolder(repo);
+          this.watching.set(repo, current);
         }
-      } catch {
-        this.watching.delete(repo);
-        delete this.dirty[repo];
-      }
+      } catch { /* the watcher ends with the copy or the machine */ }
+      if (this.watching.get(repo) === current) this.watching.delete(repo);
     });
   }
 
