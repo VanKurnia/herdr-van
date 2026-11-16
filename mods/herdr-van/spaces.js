@@ -29,6 +29,17 @@ const FALLBACK = 60000;
 // A watcher's burst of writes under .git (a commit, a checkout) becomes one look at git,
 // a moment after the last write rather than once per wave.
 const SETTLE = 1500;
+// Places looked at together (four git runs each). All at once, a few dozen spaces run past a
+// machine core's 16 running execs, and those spaces wait for FALLBACK.
+const AT_ONCE = 6;
+
+// Both runs of a pair, finished: a place isn't done while one of its runs still holds a slot.
+async function both(a, b) {
+  const done = await Promise.allSettled([a, b]);
+  const failed = done.find((d) => d.status === "rejected");
+  if (failed) throw failed.reason;
+  return done.map((d) => d.value);
+}
 
 export default class Spaces {
   init(_props, cx) {
@@ -128,6 +139,13 @@ export default class Spaces {
     const at = {};
     for (const s of sp) at[s.id] = where(s, ps);
     const keys = new Set(Object.values(at).filter((k) => JSON.parse(k)[1]));
+    // A place nobody shows any more keeps nothing: the maps are keyed by where(), so a folder
+    // left behind would answer for a repo that is gone.
+    for (const k of Object.keys(this.git)) if (!keys.has(k)) {
+      delete this.git[k];
+      delete this.checked[k];
+      this.unsure.delete(k);
+    }
     const due = new Set([...keys].filter((k) => !(k in this.git)));
     // A repo whose watcher saw writes: look once the burst has settled.
     for (const [repo, seen] of Object.entries(this.dirty)) {
@@ -183,7 +201,10 @@ export default class Spaces {
       while (this.pending.size) {
         const keys = [...this.pending];
         this.pending.clear();
-        await Promise.all(keys.map((key) => this.check(key, cx)));
+        let next = 0;
+        await Promise.all(Array.from({ length: Math.min(AT_ONCE, keys.length) }, async () => {
+          while (next < keys.length) await this.check(keys[next++], cx);
+        }));
       }
       const used = new Set(Object.values(this.git).filter(Boolean).map((g) => JSON.parse(g.repo)).filter(([on]) => !on).map(([, repo]) => repo));
       for (const repo of this.watching) if (!used.has(repo)) this.watching.delete(repo);
@@ -201,23 +222,32 @@ export default class Spaces {
     try {
       // All four in one round: none of them needs another's answer. A folder name may itself
       // contain a newline, so strip the trailing one rather than trimming.
-      const [top, common, head, counts] = await Promise.all([
-        exec("git", ["rev-parse", "--path-format=absolute", "--show-toplevel"], { cwd, on }),
-        exec("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], { cwd, on }),
-        exec("git", ["symbolic-ref", "-q", "HEAD"], { cwd, on }),
-        exec("git", ["rev-list", "--left-right", "--count", "HEAD...@{upstream}"], { cwd, on }),
+      const [first, rest] = await Promise.all([
+        both(
+          exec("git", ["rev-parse", "--path-format=absolute", "--show-toplevel"], { cwd, on }),
+          exec("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], { cwd, on }),
+        ),
+        both(
+          exec("git", ["symbolic-ref", "-q", "HEAD"], { cwd, on }),
+          exec("git", ["rev-list", "--left-right", "--count", "HEAD...@{upstream}"], { cwd, on }),
+        ),
       ]);
+      const [top, common] = first;
+      const [head, counts] = rest;
       if (top.code !== 0 || common.code !== 0) {
-        // Only git's own "no" is remembered as no repo; anything else is asked again.
-        if (!/not a git repository/i.test(top.code !== 0 ? top.stderr : common.stderr)) this.unsure.add(key);
-        this.git[key] = null;
+        // Only git's own "no" is remembered as no repo; anything else is asked again, and the
+        // answer it already had stays instead of being replaced by "no".
+        if (!/not a git repository/i.test(top.code !== 0 ? top.stderr : common.stderr)) {
+          this.unsure.add(key);
+          this.git[key] ??= null;
+        } else this.git[key] = null;
         return;
       }
       const root = top.stdout.replace(/\n$/, "");
       // The repo's own .git folder names it; a worktree's top differs from it.
       const repo = common.stdout.replace(/\n$/, "");
       const name = repo.endsWith("/.git") ? base(repo.slice(0, -5)) : base(repo).replace(/\.git$/, "");
-      // No branch means a detached HEAD; `gitTail` draws "detached" for null.
+      // No branch means a detached HEAD; `gitLine` draws "detached" for null.
       const branch = head.code === 0 ? head.stdout.trim().replace(/^refs\/heads\//, "") : null;
       const [ahead, behind] = counts.code === 0 ? counts.stdout.trim().split(/\s+/).map(Number) : [0, 0];
       this.git[key] = {
