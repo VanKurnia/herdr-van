@@ -15,6 +15,30 @@ export default class Tabs {
     this.scroll = ScrollHandle.new();
     this.selected = null; // the active tab's id …
     this.selectedIndex = null; // … and its index: a space switch can change one without the other
+    // A wheel gesture's progress: how far it has moved, how many tabs it already stepped, and when
+    // it last stepped (ms). Shared by every event of one flick.
+    this.swipe = { acc: 0, steps: 0, at: 0, last: 0 };
+  }
+
+  // One tab per wheel notch. A touchpad or a smooth-scrolling mouse sends many small events per
+  // gesture: a short swipe or one smoothed notch (about 25 px) switches one tab, a longer swipe
+  // keeps going a tab per 60 px, at most one every 100 ms so each one shows.
+  wheel(e) {
+    if (e.delta_lines) {
+      if (e.delta_lines.y) run(e.delta_lines.y > 0 ? "tab.prev" : "tab.next");
+      return;
+    }
+    const s = this.swipe, now = Date.now();
+    // Phases often arrive only as moves (a macOS touchpad included): a pause or a turn starts a new gesture.
+    if (e.touch_phase === "started" || now - s.at > 250 || e.delta.y * s.acc < 0) Object.assign(s, { acc: 0, steps: 0 });
+    s.at = now;
+    s.acc += e.delta.y;
+    const need = s.steps ? 60 : 20;
+    if (Math.abs(s.acc) < need || now - s.last < 100) return;
+    s.acc -= Math.sign(s.acc) * need;
+    s.steps++;
+    s.last = now;
+    run(e.delta.y > 0 ? "tab.prev" : "tab.next");
   }
 
   render() {
@@ -82,7 +106,7 @@ export default class Tabs {
     return h_flex().id("tab-bar").size_full().min_w(0).pl(lightsPadding).items_center()
       .on_hover((on, cx) => { if (on !== this.onBar) { this.onBar = on; cx.notify(); } })
       .on_mouse_up("left", () => { this.pressed = null; })
-      .on_scroll_wheel(e => { if (Math.abs(e.delta.y) >= 1) run(e.delta.y > 0 ? "tab.prev" : "tab.next"); })
+      .on_scroll_wheel(e => this.wheel(e))
       .child(h_flex().id("tab-scroll").flex_1().min_w(0).h_full().items_center().overflow_x_scrollbar().track_scroll(this.scroll)
         .on_size_change(reveal)
         .children(shown.map(item))
