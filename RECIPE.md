@@ -138,7 +138,7 @@ once per block.
 | --- | --- | --- |
 | `tabs` | `tabs` | shipped `tabs` minus the pill ✕, `+` moved inside the tab scroll row, min/max window buttons removed (close kept, and Windows keeps its own ✕ glyph) |
 | `spaces` | `spaces` | shipped `spaces`, root `.bg(t.chrome)` removed |
-| `agents` | `agents` | shipped `agents`, root `.bg(t.chrome)` removed (its sort menu still opens itself as an overlay, `props: { sortMenu: true }`, and a row's menu opens the name dialog the same way, `props: { agentRename: true, address }`); pins come from the terminal (`terminal.pin`), not from the mod, and names it keeps live in shared state under `agents.names` |
+| `agents` | `agents` | shipped `agents`, root `.bg(t.chrome)` removed (its own overlays open as `props: { menu: "sort" }`, `{ menu: "row", address }` and `{ menu: "name", address, name }`); pins come from the terminal (`terminal.pin`), not from the mod, and names it keeps live in shared state under `agents.names` |
 | `brand` | `brand` | shipped `workspace-chrome`'s brand row, reworked below |
 | `footer` | `sidebar-footer` | shipped `workspace-chrome`'s footer, cut to one gear, plus the herdr-tui `⌥ Prefix` badge it shows while a prefix waits |
 | `pane` | each pane's header | shipped `pane` header reworked below: icon, name, folder, status, split/zoom/close, and the Pi-Changes toggle on a pi pane |

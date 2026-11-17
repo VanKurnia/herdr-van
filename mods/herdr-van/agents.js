@@ -1,5 +1,6 @@
 // Agents in grouped or priority views; parents take their most urgent sub-agent's place.
-// A viewed done agent stays in Done until left.
+// A viewed done agent stays in Done until left. A row can also be given a name here,
+// which wins over what the agent calls itself.
 
 import { div, svg } from "gpui-kit";
 import { v_flex, h_flex, ScrollHandle, InputState, Input } from "gpui-base";
@@ -45,6 +46,12 @@ const setName = (address, name) => {
   else delete next[address];
   setShared("agents.names", next);
 };
+// What an agent calls itself: its terminal's title, else what its tab or terminal carries.
+const ownTitle = (address) => {
+  const a = agents().find((k) => k.address === address);
+  const term = terminals().find((k) => k.address === address);
+  return a?.title || a?.tab_name || term?.name || term?.template || address;
+};
 const SECTION = { 4: "Needs you", 3: "Done", 2: "Working", 1: "Idle" };
 const SECTION_STATUS = { 4: "blocked", 3: "done", 2: "working" };
 
@@ -58,10 +65,11 @@ function duration(ms) {
 
 export default class Agents {
   init(_props, cx) {
-    // Each menu and the name dialog open as their own copy: keys need a focus handle.
-    if (props()?.sortMenu || props()?.agentMenu || props()?.agentRename) {
+    // Every menu, and the name dialog, open as their own copy: keys need a focus handle.
+    const menu = props()?.menu;
+    if (menu) {
       this.handle = cx.focus_handle();
-      if (props()?.agentRename) {
+      if (menu === "name") {
         this.input = InputState.new({ placeholder: "its own title", value: props().name ?? "" });
         this.input.on("submit", () => this.commit());
         // A popup lays out after its view is built, which can take the keyboard back.
@@ -149,7 +157,7 @@ export default class Agents {
 
   // Right-click on an agent or sub-agent row: the same popup either way.
   menu(address) {
-    openOverlay({ mod: "herdr-van", kind: "popup", width: 220, props: { agentMenu: true, address } });
+    openOverlay({ mod: "herdr-van", kind: "popup", width: 220, props: { menu: "row", address } });
   }
 
   // One row's options, shaped like the tab bar's menu. A name beats what the agent calls itself.
@@ -157,8 +165,6 @@ export default class Agents {
     const addr = props()?.address;
     const name = names()[addr];
     const a = agents().find((k) => k.address === addr);
-    const term = terminals().find((k) => k.address === addr);
-    const title = name || a?.title || a?.tab_name || term?.name || term?.template || addr || "Agent";
     const rows = [];
     if (a) rows.push({ label: "Focus", icon: "terminal", command: "pane.focus", args: { pane: a.pane } });
     rows.push({ label: "Peek", icon: "monitor", command: "terminal.peek", args: { terminal: addr } });
@@ -168,9 +174,9 @@ export default class Agents {
     rows.push(a
       ? { label: "Close pane", icon: "x", rule: true, command: "pane.close", args: { pane: a.pane } }
       : { label: "Kill terminal", icon: "x", rule: true, command: "terminal.kill", args: { terminal: addr } });
-    return this.popup(t, title, rows, (i) => {
+    return this.popup(t, name || ownTitle(addr), rows, (i) => {
       closeOverlay(props().overlay);
-      if (rows[i].rename) openOverlay({ mod: "herdr-van", kind: "popup", width: 280, props: { agentRename: true, address: addr, name: name ?? "" } });
+      if (rows[i].rename) openOverlay({ mod: "herdr-van", kind: "popup", width: 280, props: { menu: "name", address: addr, name: name ?? "" } });
       else run(rows[i].command, rows[i].args);
     });
   }
@@ -179,8 +185,6 @@ export default class Agents {
   // back to the agent's own title; Esc leaves the name as it was.
   agentRename(t) {
     const p = props();
-    const a = agents().find((k) => k.address === p.address);
-    const term = terminals().find((k) => k.address === p.address);
     return v_flex().id("agent-rename").track_focus(this.handle)
       .on_key_down((e, cx) => {
         if (e.key !== "escape") return;
@@ -189,7 +193,7 @@ export default class Agents {
       })
       .p(16).gap(10).bg(t.popover).rounded(14).border_1().border_color(t.border).text_size(13).text_color(t.foreground)
       .child(div().text_size(15).font_semibold().child("Rename agent"))
-      .child(div().text_size(11.5).text_color(t.dim).truncate().child(a?.title || term?.name || p.address))
+      .child(div().text_size(11.5).text_color(t.dim).truncate().child(ownTitle(p.address)))
       .child(h_flex().h(34).flex_none().px(9).items_center().rounded(9).border_1().border_color(t.accent).bg(t.background)
         .child(Input.new(this.input).flex_1().h_full().text_size(12.8).text_color(t.foreground)))
       .child(div().text_size(11).text_color(t.dim).child("Enter save · Esc close · empty: its own title"));
@@ -261,16 +265,17 @@ export default class Agents {
 
   render(cx) {
     const t = theme();
-    if (props()?.sortMenu) return this.sortMenu(t);
-    if (props()?.agentMenu) return this.agentMenu(t);
-    if (props()?.agentRename) return this.agentRename(t);
+    const menu = props()?.menu;
+    if (menu === "sort") return this.sortMenu(t);
+    if (menu === "row") return this.agentMenu(t);
+    if (menu === "name") return this.agentRename(t);
     const collapsed = narrow();
     const sort = sortOf();
     let list = agents();
     this.listed = new Map(list.map((a) => [a.address, a.status]));
     const all = terminals();
     // A name belongs to a terminal, so it goes when that terminal does; an empty list is a start,
-    // not an end. Written here, once, the way the shipped sidebar keeps its colours.
+    // not an end. Written only when something is stale.
     const named = names();
     const live = new Set(all.filter((k) => k.state === "live").map((k) => k.address));
     if (live.size && Object.keys(named).some((address) => !live.has(address))) {
@@ -357,7 +362,7 @@ export default class Agents {
     // reads like one.
     const detail = new Map(list.map((a) => {
       const l = labels.get(a.address);
-      return [a.address, l && (named[a.address] || !/^\d+$/.test(l)) ? l : null];
+      return [a.address, named[a.address] || !/^\d+$/.test(l) ? l : null];
     }));
     const seen = {};
     for (const a of list) { const k = `${a.space_name}\u0000${detail.get(a.address) ?? ""}`; seen[k] = (seen[k] ?? 0) + 1; }
@@ -527,7 +532,7 @@ export default class Agents {
                 .text_size(11)
                 .text_color(t.dim)
                 .hover((s) => s.text_color(t.foreground))
-                .on_click(() => openOverlay({ mod: "herdr-van", kind: "popup", width: 200, height: 140, props: { sortMenu: true } }))
+                .on_click(() => openOverlay({ mod: "herdr-van", kind: "popup", width: 200, height: 140, props: { menu: "sort" } }))
                 .tooltip(`Sort agents: ${sort.label}`)
                 .child(svg(`mods/herdr-van/icons/${sort.icon}.svg`).size(14)),
             ),

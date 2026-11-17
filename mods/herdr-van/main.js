@@ -4,9 +4,9 @@
 // polling, the agents' timer and the brand's config watch never run twice.
 //
 // Props are read with props(), not the init argument: the agents list also opens
-// itself as an overlay, for its sort menu ({ sortMenu: true }), a row's options
-// ({ agentMenu: true, address }) and the name dialog ({ agentRename: true, address }),
-// and the prefix opens the jump list the same way ({ part: "jump" }).
+// itself as an overlay, and `menu` says which one — "sort", "row" (needs an
+// `address`) or "name" (an `address`, and the current `name`). The prefix opens
+// the jump list the same way ({ part: "jump" }).
 
 import { View } from "gpui-kit";
 import { props } from "herdr";
@@ -22,7 +22,7 @@ import IconPicker from "./iconPicker.js";
 
 const PARTS = { tabs: Tabs, spaces: Spaces, agents: Agents, brand: Chrome, footer: Chrome, pane: Pane, jump: Jump, runner: Runner, spaceMenu: SpaceMenu, icon: IconPicker };
 
-const partName = (cfg) => (cfg?.sortMenu || cfg?.agentMenu || cfg?.agentRename ? "agents" : cfg?.part ?? "brand");
+const partName = (cfg) => (cfg?.menu ? "agents" : cfg?.part ?? "brand");
 
 export default class HerdrVan extends View {
   init(_props, cx) {
