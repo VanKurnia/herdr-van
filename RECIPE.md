@@ -50,6 +50,12 @@ works.
 - **Agent status colors** — working shows an amber spinner, done a green dot,
   blocked a red "Needs you" badge, idle a hollow ring. The same colors come back
   in tab pills and the terminal's own status.
+- **Naming an agent**: right-click a row (a sub-agent's too) and choose **Rename
+  agent…** — a 280px dialog with the agent's own title above a field. What is typed
+  replaces that title in the list, sub-rows included, and stays put while the agent
+  renames itself; an empty name gives the row back to the agent. Names are kept by
+  terminal address, so they end with the terminal. `Rename tab…` and `Rename space…`
+  sit under it for the tab and space the row belongs to.
 - **Hovering the brand** swaps **Lucavien** back to **Herdr**; moving away
   restores it. Rows and buttons get the usual raised highlight, scoped to the
   control.
@@ -132,7 +138,7 @@ once per block.
 | --- | --- | --- |
 | `tabs` | `tabs` | shipped `tabs` minus the pill ✕, `+` moved inside the tab scroll row, min/max window buttons removed (close kept, and Windows keeps its own ✕ glyph) |
 | `spaces` | `spaces` | shipped `spaces`, root `.bg(t.chrome)` removed |
-| `agents` | `agents` | shipped `agents`, root `.bg(t.chrome)` removed (its sort menu still opens itself as an overlay, `props: { sortMenu: true }`); pins come from the terminal (`terminal.pin`), not from the mod |
+| `agents` | `agents` | shipped `agents`, root `.bg(t.chrome)` removed (its sort menu still opens itself as an overlay, `props: { sortMenu: true }`, and a row's menu opens the name dialog the same way, `props: { agentRename: true, address }`); pins come from the terminal (`terminal.pin`), not from the mod, and names it keeps live in shared state under `agents.names` |
 | `brand` | `brand` | shipped `workspace-chrome`'s brand row, reworked below |
 | `footer` | `sidebar-footer` | shipped `workspace-chrome`'s footer, cut to one gear, plus the herdr-tui `⌥ Prefix` badge it shows while a prefix waits |
 | `pane` | each pane's header | shipped `pane` header reworked below: icon, name, folder, status, split/zoom/close, and the Pi-Changes toggle on a pi pane |

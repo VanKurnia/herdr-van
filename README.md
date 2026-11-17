@@ -18,6 +18,9 @@ backdrop — no boxes, no bottom bar, no clutter.
   badge when they need you, a green dot when they're done. Collapsed to the rail it
   keeps the logo where the wordmark was, and swaps it for the expand button under
   the pointer.
+- **Agents you can name.** Right-click any agent or sub-agent row and pick **Rename
+  agent…**: the list shows your name instead of the agent's own title, without
+  touching the tab or the space. Empty it to get the title back.
 - **Spaces with their own icon.** A space can wear any `.svg` or `.png` from
   `~/.config/herdr-app/custom-icons/`, picked from the row's hover button. The
   icon is kept with the space's workspace, so a closed and reopened space comes
