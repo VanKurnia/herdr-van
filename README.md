@@ -29,6 +29,10 @@ backdrop — no boxes, no bottom bar, no clutter.
   window-close button. No pill ✕, no Files/Changes buttons, no status bar.
 - **The Pi logo.** Pi agents wear their real three-color logo instead of the
   plain glyph.
+- **What's playing.** The bottom of the sidebar shows the cover art, title and
+  artist of whatever plays on this machine, over a small live spectrum. The
+  music-note button in the footer turns it off and back on; see
+  [mods/media/README.md](mods/media/README.md) for what it needs.
 - **Ctrl+B, like the TUI.** A small mod brings the [Herdr TUI](https://herdr.dev/tui)'s
   prefix into the app: Ctrl+B, then a key. Nothing opens over the terminal — a
   `⌥ Prefix` badge appears in the footer while it waits (on the rail, the bare

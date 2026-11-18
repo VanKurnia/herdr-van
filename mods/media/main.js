@@ -12,10 +12,22 @@
 
 import { View, div, image } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
-import { appHome, checking, exec, readTextFile, writeTextFile, theme } from "herdr";
+import { appHome, checking, exec, layout, props, readTextFile, writeTextFile, theme } from "herdr";
 
 const mediaFile = (name) => `${appHome()}/data/media/${name}`;
 const modDir = () => `${appHome()}/mods/media`;
+
+// herdr's layout() is an untyped tree: find this copy's own block, by the id the
+// layout passes in props, so it can tell when it has been hidden.
+function findNode(node, id) {
+  if (!node) return null;
+  if (node.id === id) return node;
+  for (const child of node.children ?? []) {
+    const hit = findNode(child, id);
+    if (hit) return hit;
+  }
+  return null;
+}
 
 const COVER_PX = 46;
 const BARS_H = 16;
@@ -38,14 +50,37 @@ export default class Media extends View {
     this.beatBody = null; // null: the file has not been adopted yet
     this.launchedAt = 0;
     this.launchFailures = 0;
+    this.parked = false;
     if (checking()) return;
-    this.spawnHelper(cx);
+    this.parked = this.hidden();
+    if (!this.parked) this.spawnHelper(cx);
     cx.timer.every(READ_MS, (cx) => this.read(cx));
     cx.timer.every(LEVELS_MS, (cx) => this.readLevels(cx));
     cx.timer.every(BEAT_MS, (cx) => this.beat(cx));
   }
 
+  hidden() {
+    const id = props()?.block;
+    return Boolean(id && findNode(layout(), id)?.hidden);
+  }
+
+  // A hidden block keeps its copy, and its timers, alive, so being off is not
+  // free: park the helper while the row is hidden and start it again after.
+  syncParked(cx) {
+    const hidden = this.hidden();
+    if (hidden !== this.parked) {
+      this.parked = hidden;
+      if (hidden) cx.spawn(() => this.stopHelper());
+      else {
+        this.launchedAt = 0; // this was a deliberate stop, not a failed launch
+        this.spawnHelper(cx);
+      }
+    }
+    return this.parked;
+  }
+
   beat(cx) {
+    if (this.parked) return;
     cx.spawn(async () => {
       if (this.beatBody === null) {
         this.beatBody = await readTextFile(mediaFile("beat")).catch(() => undefined);
@@ -89,6 +124,7 @@ export default class Media extends View {
   }
 
   read(cx) {
+    if (this.syncParked(cx)) return;
     cx.spawn(async (cx) => {
       const body = await readTextFile(mediaFile("state.json")).catch(() => "");
       const tick = await readTextFile(mediaFile("tick")).catch(() => "");
@@ -107,7 +143,7 @@ export default class Media extends View {
 
   // Bars only move while a track plays, so a paused panel costs no reads.
   readLevels(cx) {
-    if (!this.state?.playing) return;
+    if (this.parked || !this.state?.playing) return;
     cx.spawn(async (cx) => {
       const body = await readTextFile(mediaFile("levels.json")).catch(() => "");
       if (body === this.levelsBody) return;
@@ -198,12 +234,18 @@ export default class Media extends View {
       );
   }
 
-  async close(_cx) {
+  async stopHelper() {
     if (!this.pid) return;
+    const pid = this.pid;
+    this.pid = null;
     try {
-      await exec("taskkill", ["/PID", String(this.pid), "/T", "/F"], { timeout: 5000 });
+      await exec("taskkill", ["/PID", String(pid), "/T", "/F"], { timeout: 5000 });
     } catch {
       // already gone; the stale beat stops it within 90 s either way
     }
+  }
+
+  async close(_cx) {
+    await this.stopHelper();
   }
 }

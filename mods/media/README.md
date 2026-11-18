@@ -30,6 +30,18 @@ Then the panel recovers by itself: it retries, backing off to once every five
 minutes, so it picks the dependencies up within a minute or two. Saving any file
 in this folder or reopening the window makes it immediate.
 
+## Turning it off
+
+The music-note button in the sidebar footer toggles the row — middle of the three,
+between the quota gauge and the settings gear. Off hides the block and gives its
+96 px back to the lists; the setting is part of the layout, so it survives a
+restart.
+
+Hiding a block does not stop its mod: Herdr keeps the copy, and its timers, alive.
+So the mod parks the helper itself — it looks up its own block (the layout passes
+its id in `props.block`) and, once that block is hidden, kills the process and
+stops reading. Showing the row again starts a fresh helper within a second or two.
+
 ## How it runs
 
 `main.js` is the panel. It never does the work itself: it starts `helper.py` once

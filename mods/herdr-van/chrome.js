@@ -99,6 +99,14 @@ export default class Chrome {
         .hover(s => s.bg(t.hover).text_color(t.foreground))
         .on_click(() => run("layout.toggle", { id: "quota-panel" }))
         .child(svg("mods/quota/gauge.svg").size(14));
+      const media = findBlock("media");
+      const mediaOn = Boolean(media) && !media.hidden;
+      const nowPlaying = h_flex().id("media-toggle").size(28).flex_none().flex().items_center().justify_center().rounded(8)
+        .text_color(mediaOn ? t.accent : t.muted).cursor_pointer()
+        .tooltip(mediaOn ? "Turn the now-playing row off" : "Turn the now-playing row on")
+        .hover(s => s.bg(t.hover).text_color(t.foreground))
+        .on_click(() => run("layout.toggle", { id: "media" }))
+        .child(svg("mods/media/music.svg").size(14));
       const gear = h_flex().id("settings").size(28).flex_none().flex().items_center().justify_center().gap(4).rounded(8)
         .text_color(t.muted)
         .hover(s => s.bg(t.hover).text_color(t.foreground)).cursor_pointer()
@@ -114,6 +122,7 @@ export default class Chrome {
         .on_hover(claimSidebarHover("footer"))
         .child(h_flex().w_full().items_center().gap(2)
           .when(!collapsed, el => el.child(gauge))
+          .when(!collapsed, el => el.child(nowPlaying))
           .child(gear)
           .child(div().flex_1())
           .when(armed && !collapsed, el => el.child(badge)));
