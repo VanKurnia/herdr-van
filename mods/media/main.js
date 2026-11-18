@@ -1,0 +1,209 @@
+// Now playing, for the bottom of the sidebar: cover art, title and artist, over
+// a small live spectrum.
+//
+// The WinRT and loopback-audio work lives in helper.py, started once as a hidden
+// background process; this mod only reads what it publishes. Each file has one
+// writer, because herdr's writeTextFile is a read-modify-write that needs the
+// content it expects to find:
+//   helper -> state.json, levels.json, tick, cover-*.png
+//   mod    -> beat, whose staleness tells the helper the window is gone
+// close() kills the helper; a window that died without closing is caught by the
+// beat going stale.
+
+import { View, div, image } from "gpui-kit";
+import { h_flex, v_flex } from "gpui-base";
+import { appHome, checking, exec, readTextFile, writeTextFile, theme } from "herdr";
+
+const mediaFile = (name) => `${appHome()}/data/media/${name}`;
+const modDir = () => `${appHome()}/mods/media`;
+
+const COVER_PX = 46;
+const BARS_H = 16;
+const READ_MS = 1000;
+const LEVELS_MS = 60;
+const BEAT_MS = 10000;
+const TICK_STALE_S = 15; // the helper ticks every second
+const RETRY_MS = 20000; // wait after a failed launch, doubling
+const RETRY_MAX_MS = 300000; // then keep trying slowly: dependencies can arrive later
+const OFFLINE_AFTER = 2; // failed launches before the row says why it is empty
+
+export default class Media extends View {
+  init(_props, cx) {
+    this.body = null; // last state.json body, to skip identical reads
+    this.state = null;
+    this.levelsBody = null;
+    this.levels = [];
+    this.width = 268;
+    this.pid = null;
+    this.beatBody = null; // null: the file has not been adopted yet
+    this.launchedAt = 0;
+    this.launchFailures = 0;
+    if (checking()) return;
+    this.spawnHelper(cx);
+    cx.timer.every(READ_MS, (cx) => this.read(cx));
+    cx.timer.every(LEVELS_MS, (cx) => this.readLevels(cx));
+    cx.timer.every(BEAT_MS, (cx) => this.beat(cx));
+  }
+
+  beat(cx) {
+    cx.spawn(async () => {
+      if (this.beatBody === null) {
+        this.beatBody = await readTextFile(mediaFile("beat")).catch(() => undefined);
+      }
+      const body = String(Math.floor(Date.now() / 1000));
+      try {
+        await writeTextFile(mediaFile("beat"), body, this.beatBody);
+        this.beatBody = body;
+      } catch {
+        this.beatBody = null; // changed under us: adopt it again on the next beat
+      }
+    });
+  }
+
+  spawnHelper(cx) {
+    const wait = Math.min(RETRY_MS * 2 ** Math.min(this.launchFailures, 4), RETRY_MAX_MS);
+    if (Date.now() - this.launchedAt < wait) return;
+    this.launchedAt = Date.now();
+    this.beat(cx); // freshen the beat first: a stale one makes the helper exit at once
+    cx.spawn(async () => {
+      const args = [
+        "-NoProfile",
+        "-ExecutionPolicy", "Bypass",
+        "-File", `${modDir()}/launch.ps1`,
+        "-AppHome", appHome(),
+        "-ModDir", modDir(),
+      ];
+      try {
+        const out = await exec("powershell", args, { timeout: 20000 });
+        const text = (out.stdout ?? "").trim();
+        if (/^\d+$/.test(text)) this.pid = Number(text);
+        else {
+          this.launchFailures += 1;
+          console.log("media: helper did not start:", text || "(no output)");
+        }
+      } catch (err) {
+        this.launchFailures += 1;
+        console.log("media: helper did not start:", err?.message ?? err);
+      }
+    });
+  }
+
+  read(cx) {
+    cx.spawn(async (cx) => {
+      const body = await readTextFile(mediaFile("state.json")).catch(() => "");
+      const tick = await readTextFile(mediaFile("tick")).catch(() => "");
+      // The one thing a timer must act on: a helper that is gone.
+      if (Math.floor(Date.now() / 1000) - Number(tick) > TICK_STALE_S) this.spawnHelper(cx);
+      if (body === this.body) return;
+      this.body = body;
+      try {
+        this.state = JSON.parse(body);
+      } catch {
+        this.state = null;
+      }
+      cx.notify();
+    });
+  }
+
+  // Bars only move while a track plays, so a paused panel costs no reads.
+  readLevels(cx) {
+    if (!this.state?.playing) return;
+    cx.spawn(async (cx) => {
+      const body = await readTextFile(mediaFile("levels.json")).catch(() => "");
+      if (body === this.levelsBody) return;
+      this.levelsBody = body;
+      try {
+        this.levels = JSON.parse(body).l ?? [];
+      } catch {
+        this.levels = [];
+      }
+      cx.notify();
+    });
+  }
+
+  render(cx) {
+    const t = theme();
+    const session = Boolean(this.state?.session);
+    const playing = Boolean(this.state?.playing);
+    const offline = this.launchFailures >= OFFLINE_AFTER;
+    const title = offline
+      ? "Media helper offline"
+      : session
+        ? this.state.title || "Untitled"
+        : "Nothing playing";
+    const subtitle = offline ? "see mods/media/README.md" : session ? this.state.artist || "" : "";
+    const compact = this.width < 160;
+
+    const art = this.state?.cover
+      ? image(this.state.cover).w(COVER_PX).h(COVER_PX).rounded(6).flex_none()
+      : div().w(COVER_PX).h(COVER_PX).rounded(6).flex_none().bg(t.raised);
+
+    const text = v_flex()
+      .flex_1()
+      .min_w(0)
+      .gap(2)
+      .child(
+        div()
+          .min_w(0)
+          .overflow_x_hidden()
+          .truncate()
+          .text_size(12)
+          .text_color(offline || !session ? t.dim : playing ? t.foreground : t.muted)
+          .child(title),
+      )
+      .when(Boolean(subtitle), (el) =>
+        el.child(
+          div().min_w(0).overflow_x_hidden().truncate().text_size(10).text_color(t.muted).child(subtitle),
+        ),
+      );
+
+    // Bars scale with the sidebar: each one is flex_1 of what the row has left.
+    const bars = this.levels.length
+      ? h_flex()
+          .w_full()
+          .h(BARS_H)
+          .items_end()
+          .gap(2)
+          .children(
+            this.levels.map((raw) => {
+              const level = playing && !offline ? Math.min(1, Math.max(0, raw)) : 0;
+              return div()
+                .flex_1()
+                .h(Math.max(1, Math.round(level * BARS_H)))
+                .rounded(1)
+                .bg(level > 0.06 ? t.accent : t.border);
+            }),
+          )
+      : div().w_full().h(1).bg(t.border);
+
+    return v_flex()
+      .id("media")
+      .size_full()
+      .justify_center()
+      .gap(6)
+      .px(12)
+      .on_size_change((size, cx) => {
+        if (Math.round(size.width) === Math.round(this.width)) return;
+        this.width = size.width;
+        cx.notify();
+      })
+      .when(!compact, (el) => el.child(bars))
+      .child(
+        h_flex()
+          .w_full()
+          .items_center()
+          .gap(10)
+          .child(art)
+          .when(!compact, (el) => el.child(text)),
+      );
+  }
+
+  async close(_cx) {
+    if (!this.pid) return;
+    try {
+      await exec("taskkill", ["/PID", String(this.pid), "/T", "/F"], { timeout: 5000 });
+    } catch {
+      // already gone; the stale beat stops it within 90 s either way
+    }
+  }
+}

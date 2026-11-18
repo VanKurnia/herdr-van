@@ -62,6 +62,11 @@ the icons and the background silently go missing.
   and anything it can't resolve falls back to plain JetBrains Mono, which has no
   Nerd Font glyphs.
 - Roughly a 1080p window. The backdrop is 2560×1440 and cover-fits.
+- `python` on PATH for the now-playing row at the bottom of the sidebar, plus the
+two dependency groups in [mods/media/README.md](mods/media/README.md). They are
+installed into that mod's `vendor/`, which is not committed (52 MB of it is
+numpy). Without them the row says `Media helper offline` and points at that
+README.
 
 ## Keys
 
@@ -102,6 +107,9 @@ run:
 - `whoami` (once, for the default brand name) and one `powershell` call to see
   whether the config file is a symlink.
 - `hc` — `machine ls`, and `keys ctrl+b` only when you press Ctrl+B twice.
+- `python` — the hidden helper behind the now-playing row. It reads the Windows
+media session and the default output device's loopback, and writes only inside
+`~/.config/herdr-app/data/media`.
 
 No network, no `fetch`, nothing written outside `~/.config/herdr-app`.
 
@@ -112,8 +120,10 @@ is the window's chrome in one folder — tab bar, spaces list, agents list, bran
 row, footer, and a pane header that reworks the shipped one — each a part of the
 same mod, built from the shipped `spaces`, `agents`, `tabs`, `workspace-chrome`
 and `pane`. `mods/herdr-filechanges/` is the Pi-Changes panel that header opens,
-and `mods/herdr-tui-prefix/` the Ctrl+B prefix. `RECIPE.md` is the full build
-brief if you want to know exactly what changed and why.
+and `mods/herdr-tui-prefix/` the Ctrl+B prefix. `mods/media/` is the now-playing
+row: a panel, a python helper that talks to the Windows media session, and the
+launcher that starts it. `RECIPE.md` is the full build brief if you want to know
+exactly what changed and why.
 
 ## License
 

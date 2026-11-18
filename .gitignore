@@ -2,3 +2,7 @@
 jsconfig.json
 gpui-kit.d.ts
 *.error
+
+# Installed into the mod by hand, not committed: see mods/media/README.md.
+mods/media/vendor/
+__pycache__/

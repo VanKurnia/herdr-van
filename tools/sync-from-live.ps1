@@ -21,19 +21,20 @@ $repo = Split-Path $PSScriptRoot -Parent
 if (!(Test-Path $HerdrHome)) { throw "Herdr home not found: $HerdrHome" }
 
 # Never copied down from the home folder: what the app generates (jsconfig.json,
-# gpui-kit.d.ts, *.error) and docs, whose installed copies go stale and would
-# overwrite edits made here.
+# gpui-kit.d.ts, *.error), docs, whose installed copies go stale and would
+# overwrite edits made here, and dependencies installed by hand (mods/media/vendor).
 $skip = @('jsconfig.json', 'gpui-kit.d.ts')
 function Copy-Real($src, $dst) {
   $name = Split-Path $src -Leaf
   if ($skip -contains $name -or $name -match '\.(error|md)$') { return }
+  if ($src -match '\\vendor\\|\\__pycache__\\') { return }
   $dir = Split-Path $dst -Parent
   if (!(Test-Path $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
   Copy-Item -Path $src -Destination $dst -Force
 }
 
 # Mods
-foreach ($m in @('herdr-van', 'herdr-tui-prefix', 'herdr-filechanges')) {
+foreach ($m in @('herdr-van', 'herdr-tui-prefix', 'herdr-filechanges', 'media')) {
   $src = Join-Path $HerdrHome "mods\$m"
   if (!(Test-Path $src)) { continue }
   Get-ChildItem $src -Recurse -File | ForEach-Object {

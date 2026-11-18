@@ -59,6 +59,14 @@
           ]
         },
         {
+          "id": "media",
+          "type": "block",
+          "content": { "mod": "media" },
+          "size": {
+            "px": 96
+          }
+        },
+        {
           "id": "sidebar-footer",
           "type": "block",
           "content": {
