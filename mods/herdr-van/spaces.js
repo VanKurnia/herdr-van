@@ -1,8 +1,6 @@
-// Workspace spaces: stable colored avatars, worktrees under their checkout,
-// grouped by machine when more than one is known. Under a space's name, on its own
-// line, the repo its first terminal is in now, only where unusual: branch,
-// ahead/behind. Agent state lives in the agents list, not here. Click to
-// switch, right-click for its menu, drag to reorder.
+// Workspace spaces: one card each, with a stable tile, its git branch and ahead/behind
+// where unusual, and its runners under it. Grouped by machine when more than one is
+// known. Click to switch, right-click for its menu, drag to reorder.
 
 import { div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
@@ -11,6 +9,9 @@ import { avatar, claimSidebarHover, narrow, onSidebar, place, spaceColors, space
 import { readDoc, snapshotDoc, saveSpace, saveAuto, signature, list, writeList, liveRecords, MODE, dropRecord, openWorkspace } from "./workspace.js";
 import { procsOf, liveByAddress, syncProcs, stopProc, forgetProc, rerunProc } from "./runner.js";
 import { listIcons, pickerHeight } from "./iconPicker.js";
+
+// A space card carries no state of its own: the agents list is where a person reads
+// who is working, waiting or finished.
 
 const where = (s, ps) => JSON.stringify([s.machine ?? null, place(s, ps)]);
 const base = (path) => path.replace(/\/+$/, "").split("/").pop();
@@ -23,6 +24,15 @@ const rowButton = (t, id, glyph, tip, on, color = t.dim) => h_flex().id(id).size
   .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
   .on_click((_e, cx) => { cx.stop_propagation(); on(cx); })
   .child(svg(`mods/herdr-van/icons/${glyph}.svg`).size(12));
+// A card's picture: its content in a hairline frame.
+const framed = (t, content) => div().flex_none().p(2).border(1).border_color(t.border).child(content);
+// A card's name line: the name, and while the pointer is on the card the buttons that act
+// on it. They share the line, so nothing moves or grows when they come and go.
+const nameLine = (t, name, color, pointed, buttons) => h_flex().h(17).min_w(0).gap(4).items_center()
+  .child(div().flex_1().min_w(0).truncate().text_size(12.5).font_semibold().text_color(color).child(name))
+  .when(pointed, (el) => el.child(buttons()));
+// A runner row's key, read by the row itself and by its card's hover union.
+const runnerKey = (rec) => `runner-${rec.id}`;
 // Changes made outside Herdr (an editor's save, a commit in another app): looked
 // for this often, in repos the list shows, while the window is in front.
 const FALLBACK = 60000;
@@ -55,6 +65,7 @@ export default class Spaces {
     this.pressed = null;
     this.over = null;
     this.hoverRow = null;
+    this.hoverSub = null; // the runner under the pointer, inside hoverRow's card
     this.machines = [];
     // A damaged value is dropped rather than thrown: losing the folded machines is cheap, losing
     // the sidebar is not.
@@ -310,7 +321,8 @@ export default class Spaces {
   // The rows, under a header per machine once one isn't this computer.
   grouped(t, collapsed) {
     const rows = this.ordered();
-    const draw = (r) => (collapsed ? [this.compact(r, t)] : [this.row(r, t), ...this.procRows(r.w, t)]);
+    // Runners live inside their space's card, so a row draws itself alone.
+    const draw = (r) => (collapsed ? [this.compact(r, t)] : [this.row(r, t)]);
     const remote = [...new Set([...rows.map(r => r.w.machine).filter(Boolean), ...this.machines.map(m => m.name)])].sort();
     const loading = m => {
       const layout = machines().find(k => k.name === m)?.layout;
@@ -369,26 +381,34 @@ export default class Spaces {
       .when(g.behind > 0, (el) => el.child(div().flex_none().text_color(t.ansi1).child(`\u2193${g.behind}`)));
   }
 
+  // A space as a card: its picture in a frame, its name, its git tail where git has one,
+  // and its runners under a divider — they belong to the space, so they sit inside it.
   row({ w, i, g, tree }, t) {
-    const on = w.active;
+    const key = `space-${w.id}`;
     const fill = spaceFill(t, w);
     const rec = this.records.get(w.id);
     const tail = g ? this.gitLine(g, tree, w.name, t) : null;
-    // Every row is the same height and the same tile: the second line is reserved
-    // even when there is nothing to say there, so the sidebar reads as one column
-    // of tiles and no row resizes when git answers. The name and the git line share
-    // a column beside the tile, so the tail lines up under the name by construction.
-    const tile = 32;
+    const procs = procsOf(w.id);
+    const runners = this.procRows(w, procs, t);
+    // A runner's hover arrives as the card's leaves: pointing at a row below the name
+    // must still count as pointing at the card.
+    const pointed = this.hoverRow === key || procs.some((p) => this.hoverSub === runnerKey(p));
+    const actions = () => h_flex().gap(2).items_center()
+      .child(rowButton(t, `space-icon-${w.id}`, "square-pen", "Icon", (cx) =>
+        this.pickIcon({ space: w.id, record: rec?.id, name: w.name, icon: rec?.icon, fill }, cx)))
+      .child(rowButton(t, `space-save-${w.id}`, "layers", "Save as workspace", (cx) => { this.saveLive(w.id); this.clearHover(cx); }))
+      .when((shared(MODE) ?? "active") === "all", (row) => row.child(
+        rowButton(t, `space-unload-${w.id}`, "close", "Unload (keeps it in Saved)", (cx) => { this.unload(w); this.clearHover(cx); })));
     return v_flex()
       .relative()
-      .id(`space-${w.id}`)
-      .px(8)
-      .h(42)
+      .id(key)
+      .mb(5)
       .flex_none()
-      .justify_center()
-      .rounded(8)
-      .when(on, (el) => el.bg(t.selected))
-      .when(!on, (el) => el.hover((s) => s.bg(t.hover)))
+      // A worktree sits under its checkout, indented, its own card.
+      .when(tree, (el) => el.ml(14))
+      .border(1)
+      .border_color(w.active ? t.accent : t.border)
+      .bg(t.chrome + "99")
       .when(this.pressed === i && this.over !== i, (el) => el.opacity(0.5))
       .when(this.pressed !== null && this.over === i && this.pressed !== i, (el) => el.child(
         div().absolute().left(0).right(0).h(2).bg(t.accent)
@@ -414,47 +434,37 @@ export default class Spaces {
         cx.notify();
       })
       .on_mouse_down("right", () => this.menu(w))
-      .on_hover((on, cx) => this.setHover(`space-${w.id}`, on, cx))
+      .on_hover((on, cx) => this.setHover("hoverRow", key, on, cx))
       .child(
         h_flex()
-          .gap(9)
+          .p(5)
+          .gap(8)
           .items_center()
-          .when(Boolean(tree), el => el.pl(22).child(svg("mods/herdr-van/icons/branch.svg").size(14).text_color(t.dim)))
-          .when(!tree, el => el.child(avatar(fill, w.name, "#ffffff", rec?.icon, tile)))
+          // The space's own icon, or its letter, or a branch for a worktree.
+          .child(framed(t, tree
+            ? div().w(32).h(32).flex().items_center().justify_center()
+              .child(svg("mods/herdr-van/icons/branch.svg").size(14).text_color(t.dim))
+            : avatar(fill, w.name, "#ffffff", rec?.icon, 32)))
           .child(
             v_flex()
               .flex_1()
               .min_w(0)
               .gap(1)
               .justify_center()
-              // The hover buttons ride on the name's line and take their room out of the
-              // name, never out of the git line below it. That line keeps its height when
-              // they appear (18px, the buttons' size rather than the text's), so hovering
-              // moves nothing but the name's truncation.
-              .child(
-                h_flex()
-                  .h(18)
-                  .min_w(0)
-                  .gap(4)
-                  .items_center()
-                  .child(div().flex_1().min_w(0).truncate().text_color(t.foreground).child(w.name))
-                  .when(this.hoverRow === `space-${w.id}`, el => el.child(
-                    h_flex().gap(2).items_center()
-                      .child(rowButton(t, `space-icon-${w.id}`, "square-pen", "Icon", (cx) =>
-                        this.pickIcon({ space: w.id, record: rec?.id, name: w.name, icon: rec?.icon, fill }, cx)))
-                      .child(rowButton(t, `space-save-${w.id}`, "layers", "Save as workspace", (cx) => { this.saveLive(w.id); this.clearHover(cx); }))
-                      .when((shared(MODE) ?? "active") === "all", row => row.child(
-                        rowButton(t, `space-unload-${w.id}`, "close", "Unload (keeps it in Saved)", (cx) => { this.unload(w); this.clearHover(cx); }))))))
-              // The line is always there, empty when git has nothing to add: the same
-              // 15px whether it holds text or not, so the name never shifts.
-              .child(tail ?? div().h(15))),
-      );
+              .child(nameLine(t, w.name, t.foreground, pointed, actions))
+              // Only where git has something to say; a card is content-sized, so an empty
+              // tail would be padding pretending to be information.
+              .when(tail, (el) => el.child(h_flex().h(14).min_w(0).items_center().child(tail))),
+          ),
+      )
+      .when(procs.length > 0, (el) => el
+        .child(div().h(1).flex_none().bg(t.border))
+        .child(v_flex().py(1).children(runners)));
   }
 
-  // The rail draws what a row draws, with the name gone: same tile, same height,
-  // so a folded sidebar reads as one column of icons. The number still finds its
-  // way into the tooltip, since it is how a person picks a space by key, and the
-  // status sits on the tile so it cannot shift it off the column.
+  // The rail draws each space as its tile alone, so a folded sidebar reads as one column
+  // of icons. The number finds its way into the tooltip, since it is how a person picks a
+  // space by key, and the status sits on the tile so it cannot shift it off the column.
   compact({ w, i }, t) {
     return h_flex()
       .id(`space-${w.id}`)
@@ -473,32 +483,43 @@ export default class Spaces {
           .child(w.status === "blocked" || w.status === "done" ? "●" : "·")));
   }
 
-  // One row per process of this space, in the sub-agent row's geometry: the
-  // state word is the whole story, since a process reports no status of its own.
-  procRows(w, t) {
-    return procsOf(w.id).map((rec) => {
+  // A space's runners, in the geometry the agents list gives a sub-agent: a hairline
+  // elbow turning out of the card's name column, the process's name, and its outcome at
+  // the right. A process reports no status of its own, so the outcome is the story.
+  procRows(w, recs, t) {
+    return recs.map((rec, n) => {
       const term = this.live?.get(rec.address);
-      const pic = icon(term?.program, 14, t.foreground);
-      // The outcome is a mark, not a word: a run in flight, one that finished, one
-      // the person stopped, and a failure. The exit code rides in the tooltip. A run in
-      // flight wears the same spinner the agents list uses, so "working" looks the same
-      // wherever it appears; the rest are still glyphs.
+      const pic = icon(term?.program, 13, t.foreground);
+      // A run in flight, one that finished, one the person stopped, and a failure. The
+      // exit code rides in the tooltip. A run in flight wears the same spinner the agents
+      // list uses, so "working" looks the same wherever it appears; the rest are glyphs.
       const [glyph, color] = term ? [null, t.working]
         : rec.ended?.reason === "killed" ? ["square", t.ansi3]
         : rec.ended?.code ? ["x", t.ansi1]
         : rec.ended || rec.address ? ["check", t.dim]
         : ["clock", t.dim];
-      return h_flex().id(`runner-${rec.id}`).pl(15).pr(8).h(26).flex_none().gap(0).items_center().rounded(8).text_size(12.5)
+      const last = n === recs.length - 1;
+      const key = runnerKey(rec);
+      const stroke = (el) => el.absolute().left(0).bg(t.input);
+      return h_flex().id(key).pl(9).pr(7).h(18).flex_none().items_center().text_size(11.5)
         .hover((s) => s.bg(t.hover))
         .tooltip(rec.ended?.code ? `${rec.cmd} · exited ${rec.ended.code}` : rec.cmd)
-        .on_click(() => (term ? run("terminal.peek", { terminal: term.address }) : rerunProc(rec)))
-        .on_hover((on, cx) => this.setHover(`runner-${rec.id}`, on, cx))
-        .child(div().self_start().mt(-4).w(9).h(17).mr(4).flex_none().border_l(1.5).border_color(t.input).border_b(1.5).rounded_bl(6))
-        .when(Boolean(pic), (el) => el.child(div().mr(8).child(pic)))
+        .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+        .on_click((_e, cx) => {
+          cx.stop_propagation();
+          term ? run("terminal.peek", { terminal: term.address }) : rerunProc(rec);
+        })
+        .on_hover((on, cx) => this.setHover("hoverSub", key, on, cx))
+        // The tree's elbow: a hairline down the column, turning into this row. The last
+        // row stops halfway, so the run of rows closes instead of running on.
+        .child(div().relative().w(8).h(18).mr(5).flex_none()
+          .child(stroke(div()).top(0).w(1).when(last, (el) => el.h(10)).when(!last, (el) => el.h(18)))
+          .child(stroke(div()).top(9).w(7).h(1)))
+        .when(pic, (el) => el.child(div().mr(6).child(pic)))
         .child(div().flex_1().truncate().text_color(t.muted).child(rec.name))
-        .when(term, (el) => el.child(svg("mods/herdr-van/icons/spinner.svg").size(12).flex_none().text_color(color).spin(900)))
-        .when(!term, (el) => el.child(svg(`mods/herdr-van/icons/${glyph}.svg`).size(13).flex_none().text_color(color)))
-        .when(this.hoverRow === `runner-${rec.id}`, (el) => el.child(h_flex().gap(2).items_center()
+        .when(term, (el) => el.child(svg("mods/herdr-van/icons/spinner.svg").size(11).flex_none().text_color(color).spin(900)))
+        .when(!term, (el) => el.child(svg(`mods/herdr-van/icons/${glyph}.svg`).size(11).flex_none().text_color(color)))
+        .when(this.hoverSub === key, (el) => el.child(h_flex().gap(2).items_center()
           .child(rowButton(t, `runner-rename-${rec.id}`, "square-pen", "Rename", (cx) => {
             openOverlay({ mod: "herdr-van", props: { part: "runner", space: w.id, id: rec.id }, kind: "dialog", width: 380, frame: "none" });
             this.clearHover(cx);
@@ -518,34 +539,44 @@ export default class Spaces {
     if (!recs.length) return [];
     const head = h_flex().id("workspace-head").h(24).flex_none().px(8).items_center().text_size(10.5).text_color(t.dim)
       .child(collapsed ? "" : "Saved");
-    const row = (r) => h_flex()
-      .id(`workspace-${r.id}`)
-      .h(30).flex_none().px(collapsed ? 0 : 8).gap(9).items_center().rounded(8)
-      .when(collapsed, (el) => el.justify_center())
-      .opacity(0.55)
-      .hover(s => s.bg(t.hover))
-      .on_click((_e, cx) => openWorkspace(r, cx))
-      .child(avatar(t.dim, r.name, t.chrome, r.icon))
-      .when(!collapsed, (el) => el.child(div().flex_shrink(0).max_w(150).truncate().text_color(t.muted).child(r.name)).child(div().flex_1()))
-      .when(!collapsed && this.hoverRow === `workspace-${r.id}`, el => el.child(
-        h_flex().gap(2).items_center()
-          .child(rowButton(t, `workspace-icon-${r.id}`, "square-pen", "Icon", (cx) =>
-            this.pickIcon({ record: r.id, name: r.name, icon: r.icon, fill: t.dim }, cx)))
-          .child(h_flex().id(`workspace-forget-${r.id}`).size(18).flex_none().rounded(4).items_center().justify_center().text_color(t.dim)
-            .hover(s => s.bg(t.raised).text_color(t.foreground))
-            .tooltip("Forget this workspace")
-            .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
-            .on_click((_e, cx) => { cx.stop_propagation(); dropRecord(r.id); this.clearHover(cx); })
-            .child(svg("mods/herdr-van/icons/x.svg").size(11)))))
-      .on_hover((on, cx) => this.setHover(`workspace-${r.id}`, on, cx));
+    // A stored workspace reads as a card too, saying only its name: it is not running,
+    // so there is nothing true to put beside it.
+    const row = (r) => collapsed
+      ? h_flex()
+        .id(`workspace-${r.id}`)
+        .h(30).flex_none().justify_center().rounded(8)
+        .opacity(0.55)
+        .hover(s => s.bg(t.hover))
+        .on_click((_e, cx) => openWorkspace(r, cx))
+        .on_hover((on, cx) => this.setHover("hoverRow", `workspace-${r.id}`, on, cx))
+        .child(avatar(t.dim, r.name, t.chrome, r.icon))
+      : v_flex()
+        .id(`workspace-${r.id}`)
+        .mb(5).flex_none()
+        .border(1).border_color(t.border).bg(t.chrome + "99")
+        .hover((s) => s.border_color(t.input))
+        .on_click((_e, cx) => openWorkspace(r, cx))
+        .on_hover((on, cx) => this.setHover("hoverRow", `workspace-${r.id}`, on, cx))
+        .child(
+          h_flex()
+            .p(5)
+            .gap(8)
+            .items_center()
+            .child(framed(t, avatar(t.dim, r.name, t.chrome, r.icon, 32)))
+            .child(nameLine(t, r.name, t.muted, this.hoverRow === `workspace-${r.id}`, () => h_flex().gap(2).items_center()
+              .child(rowButton(t, `workspace-icon-${r.id}`, "square-pen", "Icon", (cx) =>
+                this.pickIcon({ record: r.id, name: r.name, icon: r.icon, fill: t.dim }, cx)))
+              .child(rowButton(t, `workspace-forget-${r.id}`, "x", "Forget this workspace", (cx) => { dropRecord(r.id); this.clearHover(cx); }))).flex_1()),
+        );
     return [head, ...recs.map(row)];
   }
 
-  // Hover ownership, same rule the agents part already uses: set on enter,
-  // clear only if the pointer left the row that currently owns the hover.
-  setHover(id, on, cx) {
-    if (on) { if (this.hoverRow === id) return; this.hoverRow = id; }
-    else { if (this.hoverRow !== id) return; this.hoverRow = null; }
+  // Hover ownership: set on enter and cleared only by the row that owns it. Cards take
+  // `hoverRow`, the runners inside them `hoverSub`: one slot each, so a runner cannot
+  // clear its card's hover on its way out.
+  setHover(slot, id, on, cx) {
+    if (on ? this[slot] === id : this[slot] !== id) return;
+    this[slot] = on ? id : null;
     cx.notify();
   }
 
@@ -554,6 +585,7 @@ export default class Spaces {
   // hover explicitly and drop the drag state the row's mouse-down set.
   clearHover(cx) {
     this.hoverRow = null;
+    this.hoverSub = null;
     this.pressed = null;
     this.over = null;
     cx.notify();

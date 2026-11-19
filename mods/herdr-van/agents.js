@@ -1,11 +1,12 @@
-// Agents in grouped or priority views; parents take their most urgent sub-agent's place.
+// Agents as cards: a space-coloured edge, the space and its machine, and the agent's
+// name with its state. Sections fold; a parent takes its most urgent sub-agent's place.
 // A viewed done agent stays in Done until left. A row can also be given a name here,
 // which wins over what the agent calls itself.
 
 import { div, svg } from "gpui-kit";
 import { v_flex, h_flex, ScrollHandle, InputState, Input } from "gpui-base";
 import { agents, terminals, panes, focused, spaces, run, theme, shared, setShared, setAgentOrder, openOverlay, closeOverlay, props } from "herdr";
-import { claimSidebarHover, narrow, icon, menuCard } from "./lib.js";
+import { claimSidebarHover, narrow, icon, menuCard, spaceColors, spaceFill } from "./lib.js";
 
 // Drops the status glyph, spinner and separator an agent puts before its title, and Codex's
 // `[ ! ]` mark; stops at an opening bracket so a bracketed title keeps it.
@@ -232,7 +233,7 @@ export default class Agents {
     const on = k.address === shown;
     return h_flex()
       .id(`sub-${k.address}`)
-      .pl(15)
+      .pl(12)
       .pr(8)
       .rounded(8)
       .h(26)
@@ -282,6 +283,9 @@ export default class Agents {
       setShared("agents.names", Object.fromEntries(Object.entries(named).filter(([address]) => live.has(address))));
     }
     const ps = panes();
+    // A card's edge is its space's own colour, the one its avatar is drawn in, so the
+    // sidebar says one thing about a space. Read (and settle) the map once per render.
+    spaceColors();
     const shown = focused()?.agent;
     const now = Date.now();
     this.track(list, now);
@@ -327,7 +331,7 @@ export default class Agents {
       const open = !this.folded.has(a.address);
       return div()
         .id(`fold-${a.address}`)
-        .h(18)
+        .h(16)
         .px(3)
         .gap(3)
         .flex()
@@ -346,10 +350,8 @@ export default class Agents {
         .when(!open, (el) => el.child(String(subs.length)));
     };
 
-    // A row reads "space \u00b7 detail": the detail is a tab someone named or the agent's own
-    // title, never an automatic tab number unless two rows would otherwise read the same. A tab's
-    // title speaks for its row only while the tab holds one agent; with two, each row is named
-    // after the agent it stands for.
+    // Line two is the agent: a name someone gave it, else the tab's own title, else what it
+    // calls itself. A tab's title speaks for its row only while the tab holds one agent.
     const label = (a) => {
       if (named[a.address]) return named[a.address];
       const tab = tabsById.get(a.tab);
@@ -358,23 +360,9 @@ export default class Agents {
       return title(many ? { ...tab, named: false } : tab, many ? a : lead(panesByTab.get(a.tab) ?? []));
     };
     const labels = new Map(list.map((a) => [a.address, label(a)]));
-    // A tab's automatic number says nothing as a detail; a name someone typed does, even when it
-    // reads like one.
-    const detail = new Map(list.map((a) => {
-      const l = labels.get(a.address);
-      return [a.address, named[a.address] || !/^\d+$/.test(l) ? l : null];
-    }));
-    const seen = {};
-    for (const a of list) { const k = `${a.space_name}\u0000${detail.get(a.address) ?? ""}`; seen[k] = (seen[k] ?? 0) + 1; }
-    for (const a of list) {
-      if (detail.get(a.address) == null && seen[`${a.space_name}\u0000`] > 1) detail.set(a.address, labels.get(a.address));
-    }
 
     const row = (a, i, subs = []) => {
-      const pic = icon(a.program, 16, t.foreground);
-      const more = detail.get(a.address);
-      // An agent on another machine (`vps/t7`) says which.
-      const machine = a.address.includes("/") ? a.address.split("/")[0] : null;
+      // The rail has room for a number and a mark, nothing else.
       if (collapsed) {
         return h_flex()
           .id(`ag-${a.address}`)
@@ -389,42 +377,53 @@ export default class Agents {
           .child(div().flex_1().min_w(0).whitespace_nowrap().text_right().text_color(t.muted).child(String(i + 1)))
           .child(h_flex().w(14).flex_none().items_center().justify_center().child(this.status(t, a, true)));
       }
+      const pic = icon(a.program, 16, t.foreground);
+      // A space header above already says where the card lives; only a card that has none
+      // (priority, pinned) names its space.
+      const showSpace = (byPriority || a.pinned) && Boolean(a.space_name);
+      // A tab nobody named is called by its number: as a name it says nothing, so the
+      // program's stands in.
+      const shown = labels.get(a.address) || a.space_name;
+      const name = /^\d+$/.test(shown) ? a.program?.name || shown : shown;
+      // An agent on another machine (`vps/t7`) says which.
+      const machine = a.address.includes("/") ? a.address.split("/")[0] : null;
       const when = this.since(a);
       const idle = a.status === "idle" && !a.focused;
       const isPinned = a.pinned;
-      const pin = div()
-        .id(`pin-${a.address}`)
+      const hot = this.hovered === a.address;
+      const tool = (key, glyph, tip, action) => div()
+        .id(`${key}-${a.address}`)
         .flex_none()
         .p(2)
         .rounded(4)
         .text_color(t.dim)
         .cursor_pointer()
         .hover((s) => s.bg(t.hover).text_color(t.foreground))
-        .tooltip(isPinned ? "Unpin" : "Pin to the top")
+        .tooltip(tip)
         .on_click((_e, cx) => {
           cx.stop_propagation();
-          run("terminal.pin", { terminal: a.address, pinned: !a.pinned });
-          // The row moves away from under the pointer, and no hover-out comes.
+          action();
+          // Pinning or settling moves the row out from under the pointer, and no hover-out comes.
           this.hovered = null;
           cx.notify();
         })
-        .child(svg(`mods/herdr-van/icons/${isPinned ? "pin-off" : "pin"}.svg`).size(13));
-      // Under a space header the space goes without saying; an automatic tab number says nothing.
-      // Without a space header above (priority, pinned) the row names its space.
-      const full = byPriority || isPinned;
-      const mine = labels.get(a.address);
-      const name = full ? a.space_name || mine : more ?? (/^\d+$/.test(mine) ? a.program?.name || mine : mine);
+        .child(svg(`mods/herdr-van/icons/${glyph}.svg`).size(12));
+      const pin = tool(
+        "pin",
+        isPinned ? "pin-off" : "pin",
+        isPinned ? "Unpin" : "Pin to the top",
+        () => run("terminal.pin", { terminal: a.address, pinned: !a.pinned }),
+      );
+      // The card: line one where it lives, line two what it is. Square on the left so the
+      // spine meets the fill edge to edge; rounded on the right.
       return h_flex()
         .id(`ag-${a.address}`)
-        .px(8)
-        .h(30)
         .flex_none()
-        .rounded(8)
-        .items_center()
-        .gap(9)
-        .when(a.focused, (el) => el.bg(t.selected))
+        .rounded_r(9)
+        .overflow_hidden()
         .cursor_pointer()
-        .hover((s) => s.bg(t.hover))
+        .when(a.focused, (el) => el.bg(t.selected))
+        .when(!a.focused, (el) => el.hover((s) => s.bg(t.hover)))
         .on_hover((on, cx) => {
           if (on) this.hovered = a.address;
           else if (this.hovered === a.address) this.hovered = null;
@@ -432,20 +431,74 @@ export default class Agents {
         })
         .on_click(() => run("pane.focus", { pane: a.pane }))
         .on_mouse_down("right", (_e, cx) => { cx.stop_propagation(); this.menu(a.address); })
-        .when(Boolean(pic), el => el.child(div().id(`agent-fold-${a.address}`)
-          .when(subs.length > 0, el => el.on_click((_e, cx) => {
-            cx.stop_propagation();
-            this.folded.has(a.address) ? this.folded.delete(a.address) : this.folded.add(a.address);
-            cx.notify();
-          })).child(pic)))
-        .child(h_flex().flex_1().min_w(0).gap(5).items_center()
-          .child(div().flex_none().max_w(full && more ? 120 : 200).truncate().text_color(idle ? t.muted : t.foreground).child(name))
-          .when(full && Boolean(more), el => el.child(div().flex_1().min_w(0).truncate().text_color(t.dim).child(`\u00b7 ${more}`))))
-        .when(Boolean(machine), el => el.child(div().text_size(10).text_color(t.dim).child(machine)))
-        .when(subs.length > 0, el => el.child(fold(a, subs)))
-        .when(this.hovered === a.address, el => el.child(pin))
-        .when(this.hovered !== a.address && Boolean(when), el => el.child(div().flex_none().text_size(11).text_color(t.dim).child(duration(now - when))))
-        .child(this.status(t, a, byPriority && !isPinned));
+        .child(div().w(3).h_full().flex_none().bg(spaceFill(t, { id: a.space })))
+        .child(
+          v_flex()
+            .flex_1()
+            .min_w(0)
+            .px(9)
+            .py(6)
+            .gap(2)
+            .child(
+              h_flex()
+                .h(16)
+                .gap(6)
+                .items_center()
+                .when(Boolean(pic), (el) =>
+                  el.child(
+                    div()
+                      .id(`agent-fold-${a.address}`)
+                      .when(subs.length > 0, (inner) =>
+                        inner.on_click((_e, cx) => {
+                          cx.stop_propagation();
+                          this.folded.has(a.address) ? this.folded.delete(a.address) : this.folded.add(a.address);
+                          cx.notify();
+                        }),
+                      )
+                      .child(pic),
+                  ),
+                )
+                .when(showSpace, (el) =>
+                  el.child(
+                    div()
+                      .min_w(0)
+                      .flex_shrink(1)
+                      .truncate()
+                      .text_size(11)
+                      .text_color(t.muted)
+                      .child(a.space_name),
+                  ),
+                )
+                .when(Boolean(machine), (el) => el.child(div().flex_none().text_size(10).text_color(t.dim).child(machine)))
+                .child(div().flex_1())
+                .when(subs.length > 0, (el) => el.child(fold(a, subs)))
+                .when(hot, (el) => el.child(pin))
+                .when(hot, (el) =>
+                  el.child(
+                    tool("settle", "layers", "Settle: put its tab away", () => run("tab.settle", { id: a.tab })),
+                  ),
+                )
+                .when(!hot && Boolean(when), (el) =>
+                  el.child(div().flex_none().text_size(10.5).text_color(t.dim).child(duration(now - when))),
+                ),
+            )
+            .child(
+              h_flex()
+                .gap(8)
+                .items_center()
+                .child(
+                  div()
+                    .flex_1()
+                    .min_w(0)
+                    .truncate()
+                    .text_size(13)
+                    .font_semibold()
+                    .text_color(idle ? t.muted : t.foreground)
+                    .child(name),
+                )
+                .child(this.status(t, a, byPriority && !isPinned)),
+            ),
+        );
     };
 
     // Groups in list order: spaces (grouped) or priority sections. Agents of a
@@ -455,32 +508,37 @@ export default class Agents {
       const r = rankOf(a) || RANK.idle;
       const id = byPriority ? `sec-${r}` : `sp-${a.space}`;
       if (groups.at(-1)?.id === id) groups.at(-1).members.push(a);
-      else groups.push({ id, label: byPriority ? SECTION[r] : a.space_name || "", status: byPriority ? SECTION_STATUS[r] : null, members: [a] });
+      else groups.push({ id, label: byPriority ? SECTION[r] : a.space_name || "", status: byPriority ? SECTION_STATUS[r] : null, space: byPriority ? null : a.space, members: [a] });
     }
 
-    // A group's header; it folds the group. Folded, it says how many and the most urgent state.
+    // A group's header: its name in small caps and that group's colour, a hairline rule
+    // taking the rest of the width, then its count. Folded, it carries the most urgent
+    // state of what it hides instead of the list itself.
     const header = (g) => {
       const open = !this.folded.has(g.id);
       const top = g.members.reduce((m, a) => ((RANK[a.status] ?? 0) > (RANK[m] ?? 0) ? a.status : m), null);
+      const tone = g.space ? spaceFill(t, { id: g.space }) : t[g.status] ?? t.dim;
       return h_flex()
         .id(g.id)
         .px(8)
-        .pt(8)
-        .h(30)
+        .pt(10)
+        .pb(4)
         .flex_none()
         .gap(6)
         .items_center()
         .text_size(11)
-        .font_medium()
+        .font_semibold()
         .cursor_pointer()
+        .text_color(tone)
         .hover((s) => s.text_color(t.foreground))
         .on_click((_e, cx) => {
           open ? this.folded.add(g.id) : this.folded.delete(g.id);
           cx.notify();
         })
-        .child(div().truncate().text_color(t[g.status] ?? t.dim).child(g.label))
-        .when(byPriority || !open, (el) => el.child(div().text_color(t.dim).child(String(g.members.length))))
-        .child(div().flex_1())
+        .child(div().size(7).flex_none().rounded(2).bg(tone))
+        .child(div().min_w(0).flex_shrink(1).truncate().child((g.label || "").toUpperCase()))
+        .child(div().flex_1().min_w(12).h(1).bg(tone + "55"))
+        .child(div().text_color(t.dim).child(String(g.members.length)))
         .when(!open, (el) => el
           .when(!byPriority && top && top !== "idle", (el) => el.child(this.status(t, { status: top }, true)))
           .child(svg("mods/herdr-van/icons/chevron-right.svg").size(11).flex_none().text_color(t.dim)));

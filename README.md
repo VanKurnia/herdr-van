@@ -13,11 +13,15 @@ backdrop — no boxes, no bottom bar, no clutter.
 - **A grid behind your text.** The terminal, the sidebar and the tab bar sit on
   one faded paper grid (`backgrounds/tokyo-grid.png`); the bar has no fill of its
   own, so only the active tab and whatever the pointer is on are filled.
-- **A sidebar that tells you what's happening.** Spaces with colored avatars and
-  git branch / ahead-behind tails; agents with a spinner while they work, a red
-  badge when they need you, a green dot when they're done. Collapsed to the rail it
-  keeps the logo where the wordmark was, and swaps it for the expand button under
-  the pointer.
+- **A sidebar that tells you what's happening.** Spaces as cards: their own icon in a
+  frame, their git branch ahead/behind, and their runners under a divider with a
+  hairline elbow and their outcome. No state words on a space — the agents list is where
+  state lives. Saved workspaces as quieter cards. Agents as cards with a space-coloured
+  edge, the space and its machine, then the tab's name and its state mark. A spinner
+  while it works, a red badge when it needs you, a green dot when it's done; pin and
+  settle on hover. Section headers are small caps in the group's colour with a hairline
+  rule. Collapsed to the rail it keeps the logo where the wordmark was, and swaps it for
+  the expand button under the pointer.
 - **Agents you can name.** Right-click any agent or sub-agent row and pick **Rename
   agent…**: the list shows your name instead of the agent's own title, without
   touching the tab or the space. Empty it to get the title back.
