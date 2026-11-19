@@ -64,6 +64,10 @@ function duration(ms) {
   return h < 24 ? `${h}h` : `${Math.floor(h / 24)}d`;
 }
 
+// A space's spine: the bar that says which space a row belongs to, on every row of it.
+const spineBar = (color, strength) =>
+  div().w(3).h_full().flex_none().opacity(strength).bg(color);
+
 export default class Agents {
   init(_props, cx) {
     // Every menu, and the name dialog, open as their own copy: keys need a focus handle.
@@ -226,31 +230,42 @@ export default class Agents {
     else run("terminal.peek", { terminal: address });
   }
 
-  subRow(t, s, shown, compact) {
+  subRow(t, s, shown, compact, spine) {
     const k = s.t;
     const st = kidStatus(k, this.listed);
     const pic = icon(k.program, 14, t.foreground);
     const on = k.address === shown;
     return h_flex()
       .id(`sub-${k.address}`)
-      .pl(12)
-      .pr(8)
-      .rounded(8)
+      .rounded_r(9)
       .h(26)
       .flex_none()
-      .gap(0)
-      .items_center()
-      .text_size(12.5)
       .when(on, (el) => el.bg(t.raised))
       .hover((s) => s.bg(t.hover))
       .on_click(() => this.open(k.address))
       .on_mouse_down("right", (_e, cx) => { cx.stop_propagation(); this.menu(k.address); })
-      .children(s.lines.map(l => div().self_start().mt(-4).w(9).h(17).mr(4).flex_none()
-        .when(Boolean(l), el => el.border_l(1.5).border_color(t.input))
-        .when(l === "└" || l === "├", el => el.border_b(1.5).rounded_bl(6))))
-      .when(Boolean(pic), el => el.child(div().mr(8).child(pic)))
-      .child(div().flex_1().truncate().text_color(on ? t.foreground : t.muted).child(names()[k.address] || k.name || k.template || k.program?.name || k.address))
-      .child(this.status(t, { status: st }, compact));
+      // Quieter than the row it hangs under, and on the same edge, so the colour runs straight
+      // down a space's agents.
+      .child(spineBar(spine, 0.4))
+      // The elbow turns out of the centre of the parent's mark: 3 for the spine, 9 for that
+      // row's inset, 8 for half a 16px mark — less the half-stroke it is drawn with.
+      .child(
+        h_flex()
+          .flex_1()
+          .min_w(0)
+          .h_full()
+          .pl(16)
+          .pr(8)
+          .gap(0)
+          .items_center()
+          .text_size(12.5)
+          .children(s.lines.map(l => div().self_start().mt(-4).w(9).h(17).mr(4).flex_none()
+            .when(Boolean(l), el => el.border_l(1.5).border_color(t.input))
+            .when(l === "└" || l === "├", el => el.border_b(1.5).rounded_bl(6))))
+          .when(Boolean(pic), el => el.child(div().mr(8).child(pic)))
+          .child(div().flex_1().truncate().text_color(on ? t.foreground : t.muted).child(names()[k.address] || k.name || k.template || k.program?.name || k.address))
+          .child(this.status(t, { status: st }, compact)),
+      );
   }
 
   // compact: a ! for blocked where a header already says "Needs you".
@@ -361,7 +376,7 @@ export default class Agents {
     };
     const labels = new Map(list.map((a) => [a.address, label(a)]));
 
-    const row = (a, i, subs = []) => {
+    const row = (a, i, subs, spine) => {
       // The rail has room for a number and a mark, nothing else.
       if (collapsed) {
         return h_flex()
@@ -433,7 +448,7 @@ export default class Agents {
         })
         .on_click(() => run("pane.focus", { pane: a.pane }))
         .on_mouse_down("right", (_e, cx) => { cx.stop_propagation(); this.menu(a.address); })
-        .child(div().w(3).h_full().flex_none().bg(spaceFill(t, { id: a.space })))
+        .child(spineBar(spine, 1))
         .child(
           h_flex()
             .flex_1()
@@ -540,12 +555,14 @@ export default class Agents {
     let at = -1; // the row the focused agent itself stands on — a sub-agent has one of its own
     const add = (a, i) => {
       const subs = collapsed ? [] : this.tree(kidsOf, a.address);
+      // The space's own colour, on the row and, dimmer, on the sub-agents under it.
+      const spine = spaceFill(t, { id: a.space });
       if (at < 0 && a.address === shown) at = rows.length;
-      rows.push(row(a, i, subs));
+      rows.push(row(a, i, subs, spine));
       if (this.folded.has(a.address)) return;
       for (const s of subs) {
         if (at < 0 && s.t.address === shown) at = rows.length;
-        rows.push(this.subRow(t, s, shown, byPriority));
+        rows.push(this.subRow(t, s, shown, byPriority, spine));
       }
     };
     if (collapsed) list.forEach(add);
