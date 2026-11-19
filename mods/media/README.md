@@ -42,6 +42,11 @@ So the mod parks the helper itself — it looks up its own block (the layout pas
 its id in `props.block`) and, once that block is hidden, kills the process and
 stops reading. Showing the row again starts a fresh helper within a second or two.
 
+Stopping does not depend on remembering the pid: a reload forgets it, so a helper
+the mod does not know is found by what it runs. And a helper stuck inside a media
+call stops itself once the beat is stale, because the heartbeat is checked by its
+own thread — a call that never returns cannot keep it alive.
+
 ## How it runs
 
 `main.js` is the panel. It never does the work itself: it starts `helper.py` once

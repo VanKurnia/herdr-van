@@ -76,7 +76,6 @@ export default class Media extends View {
         this.spawnHelper(cx);
       }
     }
-    return this.parked;
   }
 
   beat(cx) {
@@ -96,11 +95,10 @@ export default class Media extends View {
   }
 
   spawnHelper(cx) {
-    const wait = Math.min(RETRY_MS * 2 ** Math.min(this.launchFailures, 4), RETRY_MAX_MS);
-    if (Date.now() - this.launchedAt < wait) return;
+    if (Date.now() - this.launchedAt < Math.min(RETRY_MS * 2 ** this.launchFailures, RETRY_MAX_MS)) return;
     this.launchedAt = Date.now();
     this.beat(cx); // freshen the beat first: a stale one makes the helper exit at once
-    cx.spawn(async () => {
+    cx.spawn(async (cx) => {
       const args = [
         "-NoProfile",
         "-ExecutionPolicy", "Bypass",
@@ -108,23 +106,30 @@ export default class Media extends View {
         "-AppHome", appHome(),
         "-ModDir", modDir(),
       ];
+      let pid = null;
+      let why = null;
       try {
         const out = await exec("powershell", args, { timeout: 20000 });
         const text = (out.stdout ?? "").trim();
-        if (/^\d+$/.test(text)) this.pid = Number(text);
-        else {
-          this.launchFailures += 1;
-          console.log("media: helper did not start:", text || "(no output)");
-        }
+        if (/^\d+$/.test(text)) pid = Number(text);
+        else why = text || "(no output)";
       } catch (err) {
-        this.launchFailures += 1;
-        console.log("media: helper did not start:", err?.message ?? err);
+        why = err?.message ?? String(err);
       }
+      if (pid === null) {
+        this.launchFailures += 1;
+        console.log("media: helper did not start:", why);
+      } else {
+        this.pid = pid;
+        this.launchFailures = 0; // a launch that worked clears the offline row and the backoff
+      }
+      cx.notify(); // the row says why it is empty, so it follows either outcome
     });
   }
 
   read(cx) {
-    if (this.syncParked(cx)) return;
+    this.syncParked(cx);
+    if (this.parked) return;
     cx.spawn(async (cx) => {
       const body = await readTextFile(mediaFile("state.json")).catch(() => "");
       const tick = await readTextFile(mediaFile("tick")).catch(() => "");
@@ -235,13 +240,21 @@ export default class Media extends View {
   }
 
   async stopHelper() {
-    if (!this.pid) return;
     const pid = this.pid;
     this.pid = null;
     try {
-      await exec("taskkill", ["/PID", String(pid), "/T", "/F"], { timeout: 5000 });
+      if (pid) await exec("taskkill", ["/PID", String(pid), "/T", "/F"], { timeout: 5000 });
+      // A reload drops the pid. There is one helper per app home, so find it by what it runs.
+      else {
+        const find = [
+          "Get-CimInstance Win32_Process -Filter \"Name='pythonw.exe' OR Name='python.exe'\"",
+          `| Where-Object { $_.CommandLine -like '*helper.py*' -and $_.CommandLine -like '*${appHome()}*' }`,
+          "| ForEach-Object { Stop-Process -Id $_.ProcessId -Force }",
+        ].join(" ");
+        await exec("powershell", ["-NoProfile", "-Command", find], { timeout: 15000 });
+      }
     } catch {
-      // already gone; the stale beat stops it within 90 s either way
+      // Already gone, or it cannot be reached: a stale beat stops it within BEAT_STALE_S.
     }
   }
 

@@ -210,11 +210,23 @@ def audio_loop(writer):
             time.sleep(2.0)
 
 
+def watch_beat(writer):
+    """Exit when the window stops beating.
+
+    The poll loop below stops itself too, but a media call that never returns
+    never reaches that check; this thread keeps beating regardless.
+    """
+    while not writer.stopping():
+        time.sleep(POLL_S)
+    os._exit(0)
+
+
 async def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--home", required=True)
     writer = Writer(parser.parse_args().home)
     threading.Thread(target=audio_loop, args=(writer,), daemon=True).start()
+    threading.Thread(target=watch_beat, args=(writer,), daemon=True).start()
 
     while not writer.stopping():
         try:
