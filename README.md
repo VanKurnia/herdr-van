@@ -17,9 +17,9 @@ backdrop — no boxes, no bottom bar, no clutter.
   frame, their git branch ahead/behind, and their runners under a divider with a
   hairline elbow and their outcome. No state words on a space — the agents list is where
   state lives. Saved workspaces as quieter cards. Agents as cards with a space-coloured
-  edge, the space and its machine, then the tab's name and its state mark. A spinner
-  while it works, a red badge when it needs you, a green dot when it's done; pin and
-  settle on hover. Section headers are small caps in the group's colour with a hairline
+  spine, then the program's mark and the tab's name, its state mark at the right. A
+  spinner while it works, a red badge when it needs you, a green dot when it's done; pin
+  and settle on hover. Section headers are small caps in the group's colour with a hairline
   rule. Collapsed to the rail it keeps the logo where the wordmark was, and swaps it for
   the expand button under the pointer.
 - **Agents you can name.** Right-click any agent or sub-agent row and pick **Rename

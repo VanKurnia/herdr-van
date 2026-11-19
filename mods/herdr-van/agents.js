@@ -1,5 +1,5 @@
-// Agents as cards: a space-coloured edge, the space and its machine, and the agent's
-// name with its state. Sections fold; a parent takes its most urgent sub-agent's place.
+// Agents as cards: a space-coloured spine, then the program's mark, the agent's name and
+// its state. Sections fold; a parent takes its most urgent sub-agent's place.
 // A viewed done agent stays in Done until left. A row can also be given a name here,
 // which wins over what the agent calls itself.
 
@@ -414,11 +414,13 @@ export default class Agents {
         isPinned ? "Unpin" : "Pin to the top",
         () => run("terminal.pin", { terminal: a.address, pinned: !a.pinned }),
       );
-      // The card: line one where it lives, line two what it is. Square on the left so the
-      // spine meets the fill edge to edge; rounded on the right.
+      // The card on one line: the space's spine, the program's mark, the name, and at the
+      // right whatever the row can say about it. Square on the left so the spine meets the
+      // fill edge to edge; rounded on the right.
       return h_flex()
         .id(`ag-${a.address}`)
         .flex_none()
+        .h(30)
         .rounded_r(9)
         .overflow_hidden()
         .cursor_pointer()
@@ -433,71 +435,62 @@ export default class Agents {
         .on_mouse_down("right", (_e, cx) => { cx.stop_propagation(); this.menu(a.address); })
         .child(div().w(3).h_full().flex_none().bg(spaceFill(t, { id: a.space })))
         .child(
-          v_flex()
+          h_flex()
             .flex_1()
             .min_w(0)
             .px(9)
-            .py(6)
-            .gap(2)
-            .child(
-              h_flex()
-                .h(16)
-                .gap(6)
-                .items_center()
-                .when(Boolean(pic), (el) =>
-                  el.child(
-                    div()
-                      .id(`agent-fold-${a.address}`)
-                      .when(subs.length > 0, (inner) =>
-                        inner.on_click((_e, cx) => {
-                          cx.stop_propagation();
-                          this.folded.has(a.address) ? this.folded.delete(a.address) : this.folded.add(a.address);
-                          cx.notify();
-                        }),
-                      )
-                      .child(pic),
-                  ),
-                )
-                .when(showSpace, (el) =>
-                  el.child(
-                    div()
-                      .min_w(0)
-                      .flex_shrink(1)
-                      .truncate()
-                      .text_size(11)
-                      .text_color(t.muted)
-                      .child(a.space_name),
-                  ),
-                )
-                .when(Boolean(machine), (el) => el.child(div().flex_none().text_size(10).text_color(t.dim).child(machine)))
-                .child(div().flex_1())
-                .when(subs.length > 0, (el) => el.child(fold(a, subs)))
-                .when(hot, (el) => el.child(pin))
-                .when(hot, (el) =>
-                  el.child(
-                    tool("settle", "layers", "Settle: put its tab away", () => run("tab.settle", { id: a.tab })),
-                  ),
-                )
-                .when(!hot && Boolean(when), (el) =>
-                  el.child(div().flex_none().text_size(10.5).text_color(t.dim).child(duration(now - when))),
-                ),
+            .gap(6)
+            .items_center()
+            // The program's mark folds a parent's sub-agents; without sub-agents it is a mark.
+            .when(pic, (el) =>
+              el.child(
+                div()
+                  .id(`agent-fold-${a.address}`)
+                  .when(subs.length > 0, (inner) =>
+                    inner.on_click((_e, cx) => {
+                      cx.stop_propagation();
+                      this.folded.has(a.address) ? this.folded.delete(a.address) : this.folded.add(a.address);
+                      cx.notify();
+                    }),
+                  )
+                  .child(pic),
+              ),
             )
             .child(
-              h_flex()
-                .gap(8)
-                .items_center()
-                .child(
-                  div()
-                    .flex_1()
-                    .min_w(0)
-                    .truncate()
-                    .text_size(13)
-                    .font_semibold()
-                    .text_color(idle ? t.muted : t.foreground)
-                    .child(name),
-                )
-                .child(this.status(t, a, byPriority && !isPinned)),
-            ),
+              div()
+                .min_w(0)
+                .flex_shrink(1)
+                .truncate()
+                .text_size(13)
+                .font_semibold()
+                .text_color(idle ? t.muted : t.foreground)
+                .child(name),
+            )
+            // A section without a space header names the space here instead.
+            .when(showSpace, (el) =>
+              el.child(
+                div()
+                  .min_w(0)
+                  .flex_shrink(1)
+                  .truncate()
+                  .text_size(11)
+                  .text_color(t.dim)
+                  .child(`\u00b7 ${a.space_name}`),
+              ),
+            )
+            .when(Boolean(machine), (el) => el.child(div().flex_none().text_size(10).text_color(t.dim).child(machine)))
+            .child(div().flex_1())
+            .when(subs.length > 0, (el) => el.child(fold(a, subs)))
+            .when(hot, (el) => el.child(pin))
+            .when(hot, (el) =>
+              el.child(
+                tool("settle", "layers", "Settle: put its tab away", () => run("tab.settle", { id: a.tab })),
+              ),
+            )
+            .when(!hot && Boolean(when), (el) =>
+              el.child(div().flex_none().text_size(10.5).text_color(t.dim).child(duration(now - when))),
+            )
+            .child(this.status(t, a, byPriority && !isPinned)),
         );
     };
 
