@@ -83,6 +83,39 @@ export const avatar = (fill, name, ink, icon, size = 24) => h_flex().size(size).
   .when(Boolean(icon), (el) => el.child(image(icon).w(size - 2).h(size - 2).flex_none()))
   .when(!icon, (el) => el.bg(fill).child(div().text_size(Math.round(size * 0.54)).font_bold().text_color(ink).child([...name][0]?.toUpperCase() ?? "?")));
 
+// A row's tree connector, drawn as hairlines over it: a stem at each nesting column, running
+// the row's full height to reach the sibling below and stopping at its own branch on the last
+// child, so a run of rows closes instead of running on. `lines` holds one entry per level:
+// "│" a level carrying on, "├" a child with siblings after it, "└" the last child, "" a level
+// with no line. Columns are 8px apart, so the caller's inset decides where the tree hangs.
+export const treeLines = (t, lines, height) => div()
+  .relative()
+  .w(lines.length * 8)
+  .h(height)
+  .flex_none()
+  .children(lines.flatMap((l, i) => l
+    ? [div().absolute().left(i * 8).top(0).w(1).bg(t.input).h(l === "└" ? height / 2 : height),
+       ...(l === "└" || l === "├" ? [div().absolute().left(i * 8).top(height / 2).w(7).h(1).bg(t.input)] : [])]
+    : []));
+
+// A section's title: a mark in its colour, its name in small caps, then a hairline rule that
+// takes the rest of the width, and whatever the section puts at its right. The mark is a glyph
+// where the section has one, else a square. The name takes the colour it is given, so a row can
+// lighten it on hover.
+export const sectionTitle = (t, { label, icon, tone = t.dim, right }) => h_flex()
+  .flex_1()
+  .min_w(0)
+  .gap(6)
+  .items_center()
+  .text_size(11)
+  .font_semibold()
+  .child(icon
+    ? svg(icon).size(14).flex_none().text_color(tone)
+    : div().size(7).flex_none().rounded(2).bg(tone))
+  .child(div().min_w(0).flex_shrink(1).truncate().child(label.toUpperCase()))
+  .child(div().flex_1().min_w(12).h(1).bg(tone + "55"))
+  .when(Boolean(right), (el) => el.child(h_flex().pl(6).child(right)));
+
 // Where a space is now: the folder of the pane it shows, else any pane in its
 // tabs, else where it was made. `ps` is panes(), read once by the caller.
 export function place(s, ps) {

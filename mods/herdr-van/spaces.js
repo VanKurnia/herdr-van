@@ -5,7 +5,7 @@
 import { div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { spaces, machines, panes, run, openOverlay, exec, hc, theme, shared, setShared, watchFolder, window, notify } from "herdr";
-import { avatar, claimSidebarHover, narrow, onSidebar, place, spaceColors, spaceFill, icon } from "./lib.js";
+import { avatar, claimSidebarHover, narrow, onSidebar, place, spaceColors, spaceFill, icon, sectionTitle, treeLines } from "./lib.js";
 import { readDoc, snapshotDoc, saveSpace, saveAuto, signature, list, writeList, liveRecords, MODE, dropRecord, openWorkspace } from "./workspace.js";
 import { procsOf, liveByAddress, syncProcs, stopProc, forgetProc, rerunProc } from "./runner.js";
 import { listIcons, pickerHeight } from "./iconPicker.js";
@@ -500,7 +500,6 @@ export default class Spaces {
         : ["clock", t.dim];
       const last = n === recs.length - 1;
       const key = runnerKey(rec);
-      const stroke = (el) => el.absolute().left(0).bg(t.input);
       return h_flex().id(key).pl(9).pr(7).h(18).flex_none().items_center().text_size(11.5)
         .hover((s) => s.bg(t.hover))
         .tooltip(rec.ended?.code ? `${rec.cmd} · exited ${rec.ended.code}` : rec.cmd)
@@ -510,11 +509,7 @@ export default class Spaces {
           term ? run("terminal.peek", { terminal: term.address }) : rerunProc(rec);
         })
         .on_hover((on, cx) => this.setHover("hoverSub", key, on, cx))
-        // The tree's elbow: a hairline down the column, turning into this row. The last
-        // row stops halfway, so the run of rows closes instead of running on.
-        .child(div().relative().w(8).h(18).mr(5).flex_none()
-          .child(stroke(div()).top(0).w(1).when(last, (el) => el.h(10)).when(!last, (el) => el.h(18)))
-          .child(stroke(div()).top(9).w(7).h(1)))
+        .child(treeLines(t, [last ? "└" : "├"], 18).mr(5))
         .when(pic, (el) => el.child(div().mr(6).child(pic)))
         .child(div().flex_1().truncate().text_color(t.muted).child(rec.name))
         .when(term, (el) => el.child(svg("mods/herdr-van/icons/spinner.svg").size(11).flex_none().text_color(color).spin(900)))
@@ -537,8 +532,10 @@ export default class Spaces {
     const live = new Set(spaces().map(s => s.id));
     const recs = list().records.filter(r => !r.live || !live.has(r.live));
     if (!recs.length) return [];
-    const head = h_flex().id("workspace-head").h(24).flex_none().px(8).items_center().text_size(10.5).text_color(t.dim)
-      .child(collapsed ? "" : "Saved");
+    // Inside the list's px(8), so px(2) puts the title on the sidebar's own 10, level with the
+    // section titles above it.
+    const head = h_flex().id("workspace-head").h(24).flex_none().px(2).items_center().text_color(t.accent)
+      .child(collapsed ? "" : sectionTitle(t, { label: "Saved", tone: t.accent, icon: "mods/herdr-van/icons/floppy.svg" }));
     // A stored workspace reads as a card too, saying only its name: it is not running,
     // so there is nothing true to put beside it.
     const row = (r) => collapsed
@@ -645,6 +642,7 @@ export default class Spaces {
     // never square, so the size comes from .size(), never from the glyph.
     const mode = shared(MODE) ?? "active";
     const add = h_flex().id("space-new").size(22).flex_none().rounded(5).items_center().justify_center()
+      .text_color(t.dim)
       .hover(s => s.bg(t.hover).text_color(t.foreground))
       .tooltip("New space")
       .on_click(() => run("space.new"))
@@ -658,9 +656,13 @@ export default class Spaces {
       .child(svg("mods/herdr-van/icons/layers.svg").size(13));
     return v_flex().id("sidebar-spaces").size_full().min_h(0).text_size(13)
       .on_hover(claimSidebarHover("spaces"))
-      .child(h_flex().h(31).pl(16).pr(10).items_center().justify_between().text_size(11.5).text_color(t.dim)
-        .when(!collapsed, el => el.child("Spaces"))
-        .when(!collapsed && onSidebar(), el => el.child(h_flex().gap(4).items_center().child(modeBtn).child(add))))
+      .child(h_flex().h(31).pl(10).pr(10).items_center().text_color(t.accent)
+        .when(!collapsed, el => el.child(sectionTitle(t, {
+          label: "Spaces",
+          tone: t.accent,
+          icon: "mods/herdr-van/icons/monitor.svg",
+          right: onSidebar() ? h_flex().gap(4).items_center().child(modeBtn).child(add) : null,
+        }))))
       .child(v_flex().flex_1().min_h(0).px(8).pb(14).overflow_y_scrollbar().mode("always")
         .on_mouse_up("left", (_e, cx) => { this.pressed = null; this.over = null; cx.notify(); })
         .children([...this.grouped(t, collapsed), ...this.savedRows(t, collapsed)]));

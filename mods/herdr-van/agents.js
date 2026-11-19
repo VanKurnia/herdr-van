@@ -6,7 +6,7 @@
 import { div, svg } from "gpui-kit";
 import { v_flex, h_flex, ScrollHandle, InputState, Input } from "gpui-base";
 import { agents, terminals, panes, focused, spaces, run, theme, shared, setShared, setAgentOrder, openOverlay, closeOverlay, props } from "herdr";
-import { claimSidebarHover, narrow, icon, menuCard, spaceColors, spaceFill } from "./lib.js";
+import { claimSidebarHover, narrow, icon, menuCard, spaceColors, spaceFill, sectionTitle, treeLines } from "./lib.js";
 
 // Drops the status glyph, spinner and separator an agent puts before its title, and Codex's
 // `[ ! ]` mark; stops at an opening bracket so a bracketed title keeps it.
@@ -88,6 +88,7 @@ export default class Agents {
     this.folded = new Set();
     this.scroll = ScrollHandle.new();
     this.scrolled = null; // the row last revealed
+    this.headHover = false; // the pointer on the section's own header
     // Each agent's last state and when it changed (ms), kept across restarts. A damaged value is
     // dropped rather than thrown: losing the ages is cheap, losing the list is not.
     try { this.changed = JSON.parse(localStorage.getItem("changed") ?? "{}"); } catch { this.changed = {}; }
@@ -247,8 +248,8 @@ export default class Agents {
       // Quieter than the row it hangs under, and on the same edge, so the colour runs straight
       // down a space's agents.
       .child(spineBar(spine, 0.4))
-      // The elbow turns out of the centre of the parent's mark: 3 for the spine, 9 for that
-      // row's inset, 8 for half a 16px mark — less the half-stroke it is drawn with.
+      // The tree hangs from the centre of the parent's mark: 3 for the spine, then that row's
+      // 9px inset and half of its 16px mark, less this row's own spine.
       .child(
         h_flex()
           .flex_1()
@@ -259,9 +260,7 @@ export default class Agents {
           .gap(0)
           .items_center()
           .text_size(12.5)
-          .children(s.lines.map(l => div().self_start().mt(-4).w(9).h(17).mr(4).flex_none()
-            .when(Boolean(l), el => el.border_l(1.5).border_color(t.input))
-            .when(l === "└" || l === "├", el => el.border_b(1.5).rounded_bl(6))))
+          .child(treeLines(t, s.lines, 26).mr(5))
           .when(Boolean(pic), el => el.child(div().mr(8).child(pic)))
           .child(div().flex_1().truncate().text_color(on ? t.foreground : t.muted).child(names()[k.address] || k.name || k.template || k.program?.name || k.address))
           .child(this.status(t, { status: st }, compact)),
@@ -532,10 +531,7 @@ export default class Agents {
         .pt(10)
         .pb(4)
         .flex_none()
-        .gap(6)
         .items_center()
-        .text_size(11)
-        .font_semibold()
         .cursor_pointer()
         .text_color(tone)
         .hover((s) => s.text_color(t.foreground))
@@ -543,13 +539,15 @@ export default class Agents {
           open ? this.folded.add(g.id) : this.folded.delete(g.id);
           cx.notify();
         })
-        .child(div().size(7).flex_none().rounded(2).bg(tone))
-        .child(div().min_w(0).flex_shrink(1).truncate().child((g.label || "").toUpperCase()))
-        .child(div().flex_1().min_w(12).h(1).bg(tone + "55"))
-        .child(div().text_color(t.dim).child(String(g.members.length)))
-        .when(!open, (el) => el
-          .when(!byPriority && top && top !== "idle", (el) => el.child(this.status(t, { status: top }, true)))
-          .child(svg("mods/herdr-van/icons/chevron-right.svg").size(11).flex_none().text_color(t.dim)));
+        .child(sectionTitle(t, {
+          label: g.label || "",
+          tone,
+          right: h_flex().gap(6).items_center()
+            .child(div().text_color(t.dim).child(String(g.members.length)))
+            .when(!open, (el) => el
+              .when(!byPriority && top && top !== "idle", (el) => el.child(this.status(t, { status: top }, true)))
+              .child(svg("mods/herdr-van/icons/chevron-right.svg").size(11).flex_none().text_color(t.dim))),
+        }));
     };
     const rows = [];
     let at = -1; // the row the focused agent itself stands on — a sub-agent has one of its own
@@ -579,23 +577,31 @@ export default class Agents {
       .id("sidebar-agents")
       .size_full()
       .min_h(0)
+      // The line above belongs to the header: it shows while the pointer is on that header, so
+      // the two sections read as one until the person reaches for the agents one.
       .border_t(1)
-      .border_color(t.border)
+      .border_color(this.headHover ? t.border : "#00000000")
       .text_size(13)
       .on_hover(claimSidebarHover("agents"))
       .when(!collapsed, (el) =>
         el.child(
           h_flex()
-            .px(16)
+            .px(10)
             .h(41)
             .pt(14)
             .pb(5)
             .flex_none()
             .items_center()
-            .justify_between()
-            .child(div().text_size(11.5).font_medium().text_color(t.dim).child("Agents"))
-            .child(
-              div()
+            .text_color(t.accent)
+            .on_hover((on, cx) => {
+              this.headHover = on;
+              cx.notify();
+            })
+            .child(sectionTitle(t, {
+              label: "Agents",
+              tone: t.accent,
+              icon: "mods/herdr-van/icons/robot.svg",
+              right: div()
                 .id("ag-sort")
                 .text_size(11)
                 .text_color(t.dim)
@@ -603,7 +609,7 @@ export default class Agents {
                 .on_click(() => openOverlay({ mod: "herdr-van", kind: "popup", width: 200, height: 140, props: { menu: "sort" } }))
                 .tooltip(`Sort agents: ${sort.label}`)
                 .child(svg(`mods/herdr-van/icons/${sort.icon}.svg`).size(14)),
-            ),
+            })),
         ),
       )
       .when(list.length === 0 && !collapsed, (el) =>
