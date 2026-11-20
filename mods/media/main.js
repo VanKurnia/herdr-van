@@ -15,7 +15,7 @@
 
 import { View } from "gpui-kit";
 import { checking, layout, props, theme } from "herdr";
-import { readText, writeBeat, writeCommand } from "./state.js";
+import { readText, writeFile } from "./state.js";
 import { backoffMs, startHelper, stopHelper } from "./helper.js";
 import { row } from "./ui.js";
 
@@ -59,8 +59,7 @@ export default class Media extends View {
     this.levels = [];
     this.width = 268;
     this.pid = null;
-    this.beatBody = null; // null: the file has not been adopted yet
-    this.cmdBody = null; // the same, for the transport clicks
+    this.expected = { beat: null, cmd: null }; // last body written for each file the mod owns
     this.launchedAt = 0;
     this.launchFailures = 0;
     this.why = null; // the launcher's answer when it could not start the helper
@@ -100,38 +99,30 @@ export default class Media extends View {
     }
   }
 
-  beat(cx) {
-    if (this.parked) return;
+  // The two files the mod owns: a heartbeat, and the transport clicks. writeTextFile needs the body
+  // it expects to find, so each file is adopted first and dropped when a write loses that race.
+  writeOwned(name, body, cx) {
     cx.spawn(async () => {
-      if (this.beatBody === null) this.beatBody = await readText("beat");
-      const body = String(Math.floor(Date.now() / 1000));
+      if (this.expected[name] === null) this.expected[name] = await readText(name);
       try {
-        await writeBeat(body, this.beatBody);
-        this.beatBody = body;
+        await writeFile(name, body, this.expected[name]);
+        this.expected[name] = body;
       } catch {
-        this.beatBody = null; // changed under us: adopt it again on the next beat
+        this.expected[name] = null;
       }
     });
+  }
+
+  beat(cx) {
+    if (this.parked) return;
+    this.writeOwned("beat", String(Math.floor(Date.now() / 1000)), cx);
   }
 
   // A click goes to the helper, the only process that can talk to the player: it applies the click
   // and republishes state, so the row shows the player's answer rather than an assumption.
   send(action, cx) {
     if (this.parked) return;
-    const body = JSON.stringify({ n: Date.now(), do: action });
-    cx.spawn(async (cx) => {
-      try {
-        if (this.cmdBody === null) this.cmdBody = await readText("cmd");
-        await writeCommand(body, this.cmdBody);
-        this.cmdBody = body;
-        // The player answers late: this one needs about a second before it reports the new status,
-        // which is longer than the helper takes to publish it.
-        cx.timer.after(300, (cx) => this.read(cx));
-        cx.timer.after(900, (cx) => this.read(cx));
-      } catch {
-        this.cmdBody = null; // changed under us: adopt it again on the next click
-      }
-    });
+    this.writeOwned("cmd", JSON.stringify({ n: Date.now(), do: action }), cx);
   }
 
   spawnHelper(cx) {
@@ -235,8 +226,6 @@ export default class Media extends View {
       hint,
       cover: this.state?.cover,
       levels: this.levels,
-      // A player that reports no position cannot be counted from: it stays zero and the row shows
-      // the length alone, rather than a clock that started when the row first looked.
       pos: elapsedPos(Number(this.state?.pos) || 0, playing ? Date.now() - this.posAt : 0),
       dur: Number(this.state?.dur) || 0,
       transport,

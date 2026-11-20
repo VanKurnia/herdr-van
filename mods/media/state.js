@@ -1,5 +1,5 @@
-// The files the helper publishes, as the mod reads them. One writer each: the helper owns
-// state.json, levels.json, tick and the covers; the mod owns beat and the transport clicks.
+// The files the helper publishes, as the mod reads them, and the writes back. One writer each: the
+// helper owns state.json, levels.json, tick and the covers; the mod owns beat and the clicks.
 import { appHome, readTextFile, writeTextFile } from "herdr";
 
 export const mediaFile = (name) => `${appHome()}/data/media/${name}`;
@@ -7,14 +7,8 @@ export const mediaFile = (name) => `${appHome()}/data/media/${name}`;
 // A read that never throws: a missing file is an empty body, which every caller reads as "nothing".
 export const readText = (name) => readTextFile(mediaFile(name)).catch(() => "");
 
-// writeTextFile is a read-modify-write: it needs the body it expects to find. An empty expectation
-// means "there is no beat yet", which is how a first write creates the file.
-export async function writeBeat(body, expected) {
-  await writeTextFile(mediaFile("beat"), body, expected || undefined);
-}
-
-// A transport click. The helper polls this file; `n` is the click's timestamp, so a number is
-// never reused across a restart of either side.
-export async function writeCommand(body, expected) {
-  await writeTextFile(mediaFile("cmd"), body, expected || undefined);
+// writeTextFile is a read-modify-write: it needs the body it expects to find, and an empty
+// expectation means "there is no file yet", which is how a first write creates one.
+export async function writeFile(name, body, expected) {
+  await writeTextFile(mediaFile(name), body, expected || undefined);
 }

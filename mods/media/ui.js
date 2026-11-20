@@ -32,6 +32,12 @@ function clock(seconds) {
   return hours ? `${hours}:${String(minutes).padStart(2, "0")}:${rest}` : `${minutes}:${rest}`;
 }
 
+// Nothing until the player reports a length; a length without a position is the whole clock.
+function clockText(pos, dur) {
+  if (!(dur > 0)) return "";
+  return pos > 0 ? `${clock(pos)} / ${clock(dur)}` : clock(dur);
+}
+
 // Bars scale with the sidebar: each one is flex_1 of what the row has left.
 export function bars(levels, playing, offline, t) {
   return levels.length
@@ -81,9 +87,7 @@ export function row({
     ? image(cover).w(COVER_PX).h(COVER_PX).rounded(6).flex_none()
     : div().w(COVER_PX).h(COVER_PX).rounded(6).flex_none().bg(t.raised);
 
-  // Nothing, until the player reports a length: a zero end time means it has no timeline to show.
-  // A zero position means it has a length but no position, so the length is all there is to say.
-  const time = dur > 0 ? (pos > 0 ? `${clock(pos)} / ${clock(dur)}` : clock(dur)) : "";
+  const time = clockText(pos, dur);
 
   // The icon brightens with the row's text colour on hover, so it is set on the button.
   const button = (id, icon, onClick) =>

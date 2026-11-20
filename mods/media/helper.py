@@ -172,15 +172,8 @@ async def commands(writer, manager):
         await asyncio.sleep(CMD_POLL_S)
 
 
-async def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--home", required=True)
-    writer = Writer(parser.parse_args().home)
-    manager = await SessionManager.request_async()
-    threading.Thread(target=audio_loop, args=(writer,), daemon=True).start()
-    threading.Thread(target=watch_beat, args=(writer,), daemon=True).start()
-    asyncio.ensure_future(commands(writer, manager))
-
+async def poll(writer, manager):
+    """The media state, sampled once a second."""
     while not writer.stopping():
         try:
             await sample(writer, manager)
@@ -188,6 +181,16 @@ async def main():
         except Exception as exc:  # a player can vanish mid-call; keep the last good state
             print("sample failed: %r" % (exc,), file=sys.stderr, flush=True)
         await asyncio.sleep(POLL_S)
+
+
+async def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--home", required=True)
+    writer = Writer(parser.parse_args().home)
+    manager = await SessionManager.request_async()
+    threading.Thread(target=audio_loop, args=(writer,), daemon=True).start()
+    threading.Thread(target=watch_beat, args=(writer,), daemon=True).start()
+    await asyncio.gather(commands(writer, manager), poll(writer, manager))
 
 
 if __name__ == "__main__":
