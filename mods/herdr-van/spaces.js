@@ -692,9 +692,9 @@ export default class Spaces {
         }))))
       .child(v_flex().flex_1().min_h(0).px(8).pb(14).overflow_y_scrollbar().mode("always").track_scroll(this.scroll)
         .on_mouse_up("left", (_e, cx) => { this.pressed = null; this.over = null; cx.notify(); })
-                 // A block above growing, or the window resizing, shrinks this list and can push the active
-         // space out without changing which space is active.
-         .on_size_change((_size, cx) => { if (this.activeAt >= 0) { this.scroll.scroll_to_item(this.activeAt); cx.notify(); } })
-         .children([...list, ...this.savedRows(t, collapsed)]));
+        // A block above growing, or the window resizing, shrinks this list and can push the active
+        // space out without changing which space is active.
+        .on_size_change((_size, cx) => { if (this.activeAt >= 0) { this.scroll.scroll_to_item(this.activeAt); cx.notify(); } })
+        .children([...list, ...this.savedRows(t, collapsed)]));
   }
 }

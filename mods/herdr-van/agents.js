@@ -26,9 +26,9 @@ function title(tab, l) {
   return tab.name === prog && telling ? live : tab.name;
 }
 const RANK = { blocked: 4, done: 3, working: 2, idle: 1 };
-// A sub-agent without a pane isn't in agents(): its raw word, error counting as
-// blocked. It's never done: it reports to its parent, and the parent's done is the news.
-// One with a pane is in agents() too, and keeps its own status.
+// A sub-agent without a pane isn't in agents(): its raw word, error counting as blocked, never
+// done - it reports to its parent, and the parent's done is the news. One with a pane is in
+// agents() too and keeps its own status.
 const kidStatus = (k, listed) => {
   const s = listed.get(k.address);
   if (s) return s;

@@ -24,7 +24,9 @@ python -m pip install --target "$env:USERPROFILE\.config\herdr-app\mods\media\ve
 Either group alone is fine. Without `winrt-*` the panel has nothing to show;
 without `soundcard`/`numpy` the cover, title and artist still work and the
 spectrum stays a flat line. Missing dependencies make the panel say
-`Media helper offline` instead of failing silently.
+`Media helper offline`, with the cause on the second line: `python is not
+installed`, `module deps missing` (hover the row for the pip line above), or
+`helper could not start` for anything else.
 
 Then the panel recovers by itself: it retries, backing off to once every five
 minutes, so it picks the dependencies up within a minute or two. Saving any file
@@ -49,24 +51,57 @@ own thread — a call that never returns cannot keep it alive.
 
 ## How it runs
 
-`main.js` is the panel. It never does the work itself: it starts `helper.py` once
-as a hidden background process and then reads the files that process publishes in
-`<appHome>/data/media/`.
+`main.js` is the view: it never does the work itself. It starts `helper.py` once
+as a hidden background process, then reads the files that process publishes in
+`<appHome>/data/media/` — `state.json`, `levels.json`, `tick` and the covers.
+`state.js` is that file protocol, `helper.js` is the process (start, reuse, stop),
+and `ui.js` draws the row from the values it is handed.
+
+On the Python side `helper.py` holds the media session, the audio loop and the
+lifecycle; `levels.py` is the spectrum maths (stdlib only, so it can be tested on
+a machine without the vendored packages); `store.py` is the file protocol — the
+writer, and the constants `PROTOCOL_V`, `LEVELS_EVERY_S` and `BEAT_STALE_S`.
 
 ```
-helper -> state.json, levels.json, tick, cover-*.png
+helper -> state.json ("v": 1), levels.json, tick, cover-*.png
 mod    -> beat
 ```
+
+`state.json` carries its protocol version as `"v"`, stamped after the record's
+own fields so a record cannot override it. A payload without this mod's version
+means the helper on disk is older than the running one: the row says
+`helper outdated — restart it` rather than drawing a shape it does not know.
+Renaming or removing a field means bumping `PROTOCOL_V` in both places —
+`store.py`, which stamps it, and `main.js`, which reads it. Adding an optional
+field does not.
 
 Each file has one writer, because Herdr's `writeTextFile` is a read-modify-write
 that needs the content it expects to find. The mod's `beat` is a heartbeat: when
 it goes 90 s stale the helper exits, which cleans up after a window that closed
 without running `close()`. In the other direction the helper's `tick` going stale
-is what makes the panel restart it.
+is what makes the panel restart it; that check runs on a 5 s timer of its own, so
+the state read does not carry it.
 
 `launch.ps1` starts the helper hidden, reuses one that is already running (a
-window may have closed without stopping it), and reports `no-python` or
-`no-deps` so the panel can say why it is not showing anything.
+window may have closed without stopping it), and answers `no-python` or
+`no-deps`; anything else comes back as an error to quote. Those answers are what
+the row turns into `python is not installed`, `module deps missing` (hover it for
+the pip line) or `helper could not start`.
+
+## Tests
+
+The spectrum maths and the file protocol are plain Python, so they are tested
+with the standard library — no dependencies, no Windows APIs:
+
+```powershell
+cd "$env:USERPROFILE\.config\herdr-app\mods\media"
+python -m unittest discover -s tests -t .
+```
+
+`tests/` needs its `__init__.py`; without it `discover` fails with "Start
+directory is not importable". These tests cover `levels.py` and `store.py` only:
+the media session and the audio capture need Windows and are checked by running
+the panel.
 
 ## Notes
 
@@ -75,5 +110,9 @@ window may have closed without stopping it), and reports `no-python` or
   reads as silence.
 - Cover art is stored under a content-addressed name so a new track never shows a
   stale decoded image, and the previous cover is pruned.
-- The bars refresh ~17 times a second while a track plays and not at all while it
-  is paused. Raise `LEVELS_MS` in `main.js` to make that cheaper.
+- The bars refresh about 8 times a second while a track plays, and not at all
+  while it is paused or the sidebar is folded below 160 px (there the row is
+  cover-only). GPUI eases each bar's height between those updates, so the motion
+  is smoother than the data rate: `LEVELS_MS` in `main.js` is the mod's read
+  interval and `LEVELS_EVERY_S` in `store.py` is the helper's publish interval,
+  ~10 times a second.

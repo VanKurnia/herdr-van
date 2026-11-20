@@ -3,19 +3,34 @@
 //
 // The WinRT and loopback-audio work lives in helper.py, started once as a hidden
 // background process; this mod only reads what it publishes. Each file has one
-// writer, because herdr's writeTextFile is a read-modify-write that needs the
+// writer, because herdr's file write is a read-modify-write that needs the
 // content it expects to find:
 //   helper -> state.json, levels.json, tick, cover-*.png
 //   mod    -> beat, whose staleness tells the helper the window is gone
 // close() kills the helper; a window that died without closing is caught by the
 // beat going stale.
+//
+// This file is the view: the file protocol is state.js, the process lifecycle is
+// helper.js, the row's pixels are ui.js.
 
-import { View, div, image } from "gpui-kit";
-import { h_flex, v_flex } from "gpui-base";
-import { appHome, checking, exec, layout, props, readTextFile, writeTextFile, theme } from "herdr";
+import { View } from "gpui-kit";
+import { checking, layout, props, theme } from "herdr";
+import { readText, writeBeat } from "./state.js";
+import { backoffMs, startHelper, stopHelper } from "./helper.js";
+import { row } from "./ui.js";
 
-const mediaFile = (name) => `${appHome()}/data/media/${name}`;
-const modDir = () => `${appHome()}/mods/media`;
+const COMPACT_PX = 160; // below this the row is cover-only: no text, no bars
+const READ_MS = 1000;
+const LEVELS_MS = 120;
+const BEAT_MS = 10000;
+const TICK_STALE_S = 15; // the helper ticks every second
+const OFFLINE_AFTER = 2; // failed launches before the row says why it is empty
+const PROTOCOL_V = 1; // the state.json shape this mod reads; mirrors store.py's PROTOCOL_V
+
+// What launch.ps1 answers when it cannot start the helper. Anything else is a real error to quote.
+const REASON = { "no-python": "python is not installed", "no-deps": "module deps missing" };
+const PIP =
+  'python -m pip install --target "%USERPROFILE%\\.config\\herdr-app\\mods\\media\\vendor" winrt-runtime winrt-Windows.Media.Control winrt-Windows.Storage.Streams winrt-Windows.Foundation winrt-Windows.Storage soundcard numpy';
 
 // herdr's layout() is an untyped tree: find this copy's own block, by the id the
 // layout passes in props, so it can tell when it has been hidden.
@@ -29,22 +44,9 @@ function findNode(node, id) {
   return null;
 }
 
-const COVER_PX = 46;
-const BARS_H = 16;
-const COMPACT_PX = 160; // below this the row is cover-only: no text, no bars
-const READ_MS = 1000;
-const LEVELS_MS = 120;
-const BEAT_MS = 10000;
-const TICK_STALE_S = 15; // the helper ticks every second
-const RETRY_MS = 20000; // wait after a failed launch, doubling
-const RETRY_MAX_MS = 300000; // then keep trying slowly: dependencies can arrive later
-const OFFLINE_AFTER = 2; // failed launches before the row says why it is empty
-const PROTOCOL_V = 1; // the state.json shape this mod reads; mirrors helper.py's PROTOCOL_V
-
 export default class Media extends View {
   init(_props, cx) {
     this.body = null; // last state.json body, to skip identical reads
-    this.stale = false; // the payload is not this mod's protocol version
     this.state = null;
     this.levelsBody = null;
     this.levels = [];
@@ -53,7 +55,7 @@ export default class Media extends View {
     this.beatBody = null; // null: the file has not been adopted yet
     this.launchedAt = 0;
     this.launchFailures = 0;
-    this.why = null; // launch.ps1's answer when it could not start the helper
+    this.why = null; // the launcher's answer when it could not start the helper
     this.parked = false;
     if (checking()) return;
     this.parked = this.hidden();
@@ -75,8 +77,11 @@ export default class Media extends View {
     const hidden = this.hidden();
     if (hidden !== this.parked) {
       this.parked = hidden;
-      if (hidden) cx.spawn(() => this.stopHelper());
-      else {
+      if (hidden) {
+        const pid = this.pid;
+        this.pid = null;
+        cx.spawn(() => stopHelper(pid));
+      } else {
         this.launchedAt = 0; // this was a deliberate stop, not a failed launch
         this.spawnHelper(cx);
       }
@@ -86,12 +91,10 @@ export default class Media extends View {
   beat(cx) {
     if (this.parked) return;
     cx.spawn(async () => {
-      if (this.beatBody === null) {
-        this.beatBody = await readTextFile(mediaFile("beat")).catch(() => undefined);
-      }
+      if (this.beatBody === null) this.beatBody = await readText("beat");
       const body = String(Math.floor(Date.now() / 1000));
       try {
-        await writeTextFile(mediaFile("beat"), body, this.beatBody);
+        await writeBeat(body, this.beatBody);
         this.beatBody = body;
       } catch {
         this.beatBody = null; // changed under us: adopt it again on the next beat
@@ -100,27 +103,11 @@ export default class Media extends View {
   }
 
   spawnHelper(cx) {
-    if (Date.now() - this.launchedAt < Math.min(RETRY_MS * 2 ** this.launchFailures, RETRY_MAX_MS)) return;
+    if (Date.now() - this.launchedAt < backoffMs(this.launchFailures)) return;
     this.launchedAt = Date.now();
     this.beat(cx); // freshen the beat first: a stale one makes the helper exit at once
     cx.spawn(async (cx) => {
-      const args = [
-        "-NoProfile",
-        "-ExecutionPolicy", "Bypass",
-        "-File", `${modDir()}/launch.ps1`,
-        "-AppHome", appHome(),
-        "-ModDir", modDir(),
-      ];
-      let pid = null;
-      let why = null;
-      try {
-        const out = await exec("powershell", args, { timeout: 20000 });
-        const text = (out.stdout ?? "").trim();
-        if (/^\d+$/.test(text)) pid = Number(text);
-        else why = text || "(no output)";
-      } catch (err) {
-        why = err?.message ?? String(err);
-      }
+      const { pid, why } = await startHelper();
       this.why = pid === null ? why : null; // kept for the row: "no-python", "no-deps", or an error
       if (pid === null) {
         this.launchFailures += 1;
@@ -137,17 +124,13 @@ export default class Media extends View {
     this.syncParked(cx);
     if (this.parked) return;
     cx.spawn(async (cx) => {
-      const body = await readTextFile(mediaFile("state.json")).catch(() => "");
+      const body = await readText("state.json");
       if (body === this.body) return;
       this.body = body;
       try {
         this.state = JSON.parse(body);
-        // A helper that predates this field (or a future one) keeps running until it exits: it is a
-        // separate process, so the on-disk helper.py can be newer than the payload being served.
-        this.stale = this.state?.v !== PROTOCOL_V;
       } catch {
         this.state = null;
-        this.stale = false;
       }
       cx.notify();
     });
@@ -158,7 +141,7 @@ export default class Media extends View {
   alive(cx) {
     if (this.parked) return;
     cx.spawn(async (cx) => {
-      const tick = await readTextFile(mediaFile("tick")).catch(() => "");
+      const tick = await readText("tick");
       // The one thing a timer must act on: a helper that is gone.
       if (Math.floor(Date.now() / 1000) - Number(tick) > TICK_STALE_S) this.spawnHelper(cx);
     });
@@ -169,7 +152,7 @@ export default class Media extends View {
   readLevels(cx) {
     if (this.parked || !this.state?.playing || this.width < COMPACT_PX) return;
     cx.spawn(async (cx) => {
-      const body = await readTextFile(mediaFile("levels.json")).catch(() => "");
+      const body = await readText("levels.json");
       if (body === this.levelsBody) return;
       this.levelsBody = body;
       try {
@@ -181,127 +164,51 @@ export default class Media extends View {
     });
   }
 
-  render(cx) {
+  render(_cx) {
     const t = theme();
     const session = Boolean(this.state?.session);
     const playing = Boolean(this.state?.playing);
     const offline = this.launchFailures >= OFFLINE_AFTER;
+    // A helper that predates this field (or a future one) keeps running until it exits: it is a
+    // separate process, so the on-disk code can be newer than the payload being served.
+    const stale = Boolean(this.state) && this.state.v !== PROTOCOL_V;
     const title = offline
       ? "Media helper offline"
       : session
         ? this.state.title || "Untitled"
         : "Nothing playing";
-    // launch.ps1 answers "no-python" or "no-deps"; anything else is a real error worth quoting.
-    const reason = offline
-      ? this.why === "no-python"
-        ? "python is not installed"
-        : this.why === "no-deps"
-          ? "module deps missing"
-          : "helper could not start"
-      : null;
     const subtitle = offline
-      ? reason
-      : this.stale
+      ? REASON[this.why] ?? "helper could not start"
+      : stale
         ? "helper outdated — restart it"
         : session
           ? this.state.artist || ""
           : "";
     // Only the dependency case has an action worth carrying; the other two are already sentences.
-    const hint =
-      offline && this.why === "no-deps"
-        ? 'python -m pip install --target "%USERPROFILE%\\.config\\herdr-app\\mods\\media\\vendor" winrt-runtime winrt-Windows.Media.Control winrt-Windows.Storage.Streams winrt-Windows.Foundation winrt-Windows.Storage soundcard numpy'
-        : "";
-    const compact = this.width < COMPACT_PX;
+    const hint = offline && this.why === "no-deps" ? PIP : "";
 
-    const art = this.state?.cover
-      ? image(this.state.cover).w(COVER_PX).h(COVER_PX).rounded(6).flex_none()
-      : div().w(COVER_PX).h(COVER_PX).rounded(6).flex_none().bg(t.raised);
-
-    const text = v_flex()
-      .flex_1()
-      .min_w(0)
-      .gap(2)
-      .child(
-        div()
-          .min_w(0)
-          .overflow_x_hidden()
-          .truncate()
-          .text_size(12)
-          .text_color(offline || !session ? t.dim : playing ? t.foreground : t.muted)
-          .child(title),
-      )
-      .when(Boolean(subtitle), (el) =>
-        el.child(
-          div().min_w(0).overflow_x_hidden().truncate().text_size(10).text_color(t.muted).child(subtitle),
-        ),
-      );
-
-    // Bars scale with the sidebar: each one is flex_1 of what the row has left.
-    const bars = this.levels.length
-      ? h_flex()
-          .w_full()
-          .h(BARS_H)
-          .items_end()
-          .gap(2)
-          .children(
-            this.levels.map((raw, i) => {
-              const level = playing && !offline ? Math.min(1, Math.max(0, raw)) : 0;
-              return div()
-                .id(`band-${i}`)
-                // GPUI eases the height between frames, so the data rate no longer sets how
-                // smooth the bars look — and no redraw is needed to animate them.
-                .transition("height", 80)
-                .flex_1()
-                .h(Math.max(1, Math.round(level * BARS_H)))
-                .rounded(1)
-                .bg(level > 0.06 ? t.accent : t.border);
-            }),
-          )
-      : div().w_full().h(1).bg(t.border);
-
-    return v_flex()
-      .id("media")
-      .size_full()
-      .justify_center()
-      .gap(6)
-      .px(12)
-      .on_size_change((size, cx) => {
+    return row({
+      t,
+      compact: this.width < COMPACT_PX,
+      offline,
+      playing,
+      session,
+      title,
+      subtitle,
+      hint,
+      cover: this.state?.cover,
+      levels: this.levels,
+      onWidth: (size, cx) => {
         if (Math.round(size.width) === Math.round(this.width)) return;
         this.width = size.width;
         cx.notify();
-      })
-      .when(Boolean(hint), (el) => el.tooltip(hint))
-      .when(!compact, (el) => el.child(bars))
-      .child(
-        h_flex()
-          .w_full()
-          .items_center()
-          .gap(10)
-          .child(art)
-          .when(!compact, (el) => el.child(text)),
-      );
-  }
-
-  async stopHelper() {
-    const pid = this.pid;
-    this.pid = null;
-    try {
-      if (pid) await exec("taskkill", ["/PID", String(pid), "/T", "/F"], { timeout: 5000 });
-      // A reload drops the pid. There is one helper per app home, so find it by what it runs.
-      else {
-        const find = [
-          "Get-CimInstance Win32_Process -Filter \"Name='pythonw.exe' OR Name='python.exe'\"",
-          `| Where-Object { $_.CommandLine -like '*helper.py*' -and $_.CommandLine -like '*${appHome()}*' }`,
-          "| ForEach-Object { Stop-Process -Id $_.ProcessId -Force }",
-        ].join(" ");
-        await exec("powershell", ["-NoProfile", "-Command", find], { timeout: 15000 });
-      }
-    } catch {
-      // Already gone, or it cannot be reached: a stale beat stops it within BEAT_STALE_S.
-    }
+      },
+    });
   }
 
   async close(_cx) {
-    await this.stopHelper();
+    const pid = this.pid;
+    this.pid = null;
+    await stopHelper(pid);
   }
 }

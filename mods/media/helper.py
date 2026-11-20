@@ -4,7 +4,7 @@ One long-lived process with two jobs: an asyncio loop polls the Windows media
 session (title, artist, playback state, cover art), and a thread reads WASAPI
 loopback audio for the spectrum bars. It owns state.json, levels.json, tick and
 the cover files; the mod owns `beat` and only reads the rest. A beat older than
-BEAT_STALE_S means the window is gone, so this exits.
+the store's staleness window means the window is gone, so this exits.
 
 PowerShell 5.1 exposes the session metadata but cannot drain the artwork stream
 (no WinRT projection, so AsStreamForRead and DataReader are unreachable), and
@@ -17,9 +17,6 @@ soundcard/numpy provide on this platform.
 
 import argparse
 import asyncio
-import hashlib
-import json
-import math
 import os
 import sys
 import threading
@@ -32,21 +29,10 @@ from winrt.windows.media.control import (  # noqa: E402
     GlobalSystemMediaTransportControlsSessionManager as SessionManager,
 )
 from winrt.windows.storage.streams import Buffer, InputStreamOptions  # noqa: E402
+from levels import BAND_RANGES, BANDS, BLOCK, DECAY, LOUDNESS, RATE, level  # noqa: E402
+from store import Writer  # noqa: E402
 
 POLL_S = 1.0
-BEAT_STALE_S = 90.0  # the mod beats every 10 s
-PROTOCOL_V = 1  # state.json's shape; bump when a field is renamed or removed
-
-# Spectrum: log-spaced bands from 40 Hz to 16 kHz, published ~10 times a second.
-BANDS = 28
-RATE = 44100
-BLOCK = 2048
-LEVELS_EVERY_S = 0.1
-LOW_HZ = 40.0
-HIGH_HZ = 16000.0
-FLOOR_DB = -55.0  # a band quieter than this reads as empty
-DECAY = 0.80  # how fast a bar falls between blocks
-LOUDNESS = BLOCK * 0.25  # FFT peak that counts as full scale
 PLAYBACK = {
     0: "closed",
     1: "opened",
@@ -55,91 +41,6 @@ PLAYBACK = {
     4: "playing",
     5: "paused",
 }
-
-
-def band_ranges():
-    """Log-spaced FFT bin ranges, one (low, high) per band."""
-    step = math.log(HIGH_HZ / LOW_HZ) / BANDS
-    edges = [
-        min(max(1, round(LOW_HZ * math.exp(step * i) / (RATE / BLOCK))), BLOCK // 2)
-        for i in range(BANDS + 1)
-    ]
-    return [(a, max(a + 1, b)) for a, b in zip(edges, edges[1:])]
-
-
-BAND_RANGES = band_ranges()
-
-
-def level(peak):
-    """An FFT peak as 0..1 between FLOOR_DB and full scale."""
-    db = 20.0 * math.log10(peak) if peak > 1e-9 else -120.0
-    return max(0.0, min(1.0, (db - FLOOR_DB) / -FLOOR_DB))
-
-
-class Writer:
-    def __init__(self, home):
-        self.dir = os.path.join(home, "data", "media")
-        os.makedirs(self.dir, exist_ok=True)
-        self.beat_path = os.path.join(self.dir, "beat")
-        self.state = None  # last published bodies, to skip identical writes
-        self.levels = None
-        self.levels_at = 0.0
-        self.playing = False
-        self.cover = None  # last cover path published for this track
-        self.cover_key = None  # the track that path belongs to
-
-    def stopping(self):
-        # Written by the mod, never by this process.
-        try:
-            age = time.time() - os.path.getmtime(self.beat_path)
-        except OSError:
-            return False  # the mod has not written one yet
-        return age > BEAT_STALE_S
-
-    def _atomic(self, name, body):
-        """Write text through a temp file, so the mod never reads a partial body."""
-        path = os.path.join(self.dir, name)
-        with open(path + ".tmp", "w", encoding="utf-8") as fh:
-            fh.write(body)
-        os.replace(path + ".tmp", path)
-
-    def tick(self):
-        """Proof of life for the mod: an unchanged track writes nothing else."""
-        self._atomic("tick", str(int(time.time())))
-
-    def publish(self, record):
-        # One field every body carries, so the mod can tell an older helper's payload from its own.
-        body = json.dumps({**record, "v": PROTOCOL_V}, ensure_ascii=False)
-        if body == self.state:
-            return
-        self.state = body
-        self._atomic("state.json", body)
-
-    def publish_levels(self, levels):
-        body = json.dumps({"l": levels}, separators=(",", ":"))
-        now = time.time()
-        if body == self.levels:
-            return
-        if self.levels is not None and now - self.levels_at < LEVELS_EVERY_S:
-            return
-        self.levels, self.levels_at = body, now
-        self._atomic("levels.json", body)
-
-    def save_cover(self, data):
-        """Store cover art under a content-addressed name; None means no art."""
-        if data is None:
-            return None
-        name = "cover-%s.png" % hashlib.sha1(data).hexdigest()[:8]
-        path = os.path.join(self.dir, name)
-        if not os.path.exists(path):
-            with open(path + ".tmp", "wb") as fh:
-                fh.write(data)
-            os.replace(path + ".tmp", path)
-            for old in os.listdir(self.dir):
-                if old.startswith("cover-") and old != name:
-                    os.unlink(os.path.join(self.dir, old))
-        # A fresh path per track, so the host never shows a decoded stale image.
-        return "data/media/" + name
 
 
 async def read_thumbnail(reference):
