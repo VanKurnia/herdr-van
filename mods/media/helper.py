@@ -1,9 +1,10 @@
 """Live track and spectrum for mods/media.
 
 One long-lived process with two jobs: an asyncio loop polls the Windows media
-session (title, artist, playback state, cover art), and a thread reads WASAPI
-loopback audio for the spectrum bars. It owns state.json, levels.json, tick and
-the cover files; the mod owns `beat` and only reads the rest. A beat older than
+session (title, artist, clock, playback state, cover art) and applies the mod's
+transport clicks, and a thread reads WASAPI loopback audio for the spectrum bars.
+It owns state.json, levels.json, tick and the cover files; the mod owns `beat` and
+the clicks in `cmd`, and only reads the rest. A beat older than
 the store's staleness window means the window is gone, so this exits.
 
 PowerShell 5.1 exposes the session metadata but cannot drain the artwork stream
@@ -33,6 +34,7 @@ from levels import BAND_RANGES, BANDS, BLOCK, DECAY, LOUDNESS, RATE, level  # no
 from store import Writer  # noqa: E402
 
 POLL_S = 1.0
+CMD_POLL_S = 0.15  # how soon a transport click reaches the player
 PLAYBACK = {
     0: "closed",
     1: "opened",
@@ -55,8 +57,7 @@ async def read_thumbnail(reference):
     return bytes(buffer)
 
 
-async def sample(writer):
-    manager = await SessionManager.request_async()
+async def sample(writer, manager):
     session = manager.get_current_session()
     if session is None:
         writer.playing = False
@@ -64,6 +65,7 @@ async def sample(writer):
         return
     props = await session.try_get_media_properties_async()
     status = PLAYBACK.get(int(session.get_playback_info().playback_status), "unknown")
+    timeline = session.get_timeline_properties()
     writer.playing = status == "playing"
     # The artwork stream is only worth opening when the track changed, or when this track has no
     # art yet (players publish the picture a moment after the metadata, so keep trying while it
@@ -87,6 +89,9 @@ async def sample(writer):
             "playing": writer.playing,
             "app": session.source_app_user_model_id or "",
             "cover": writer.cover,
+            # Zeros when the player reports no timeline, which is the row's cue to hide the clock.
+            "pos": int(timeline.position.total_seconds()),
+            "dur": int(timeline.end_time.total_seconds()),
         }
     )
 
@@ -138,16 +143,47 @@ def watch_beat(writer):
     os._exit(0)
 
 
+async def apply(session, action):
+    """One transport click, in the session's own vocabulary."""
+    if action == "toggle":
+        await session.try_toggle_play_pause_async()
+    elif action == "next":
+        await session.try_skip_next_async()
+    else:
+        await session.try_skip_previous_async()
+
+
+async def commands(writer, manager):
+    """The mod's transport clicks, applied as they land, then published at once.
+
+    A player accepts or ignores each one; the state that follows is what the row
+    shows, so nothing here is remembered.
+    """
+    while not writer.stopping():
+        action = writer.take_command()
+        if action:
+            session = manager.get_current_session()
+            if session is not None:
+                try:
+                    await apply(session, action)
+                    await sample(writer, manager)
+                except Exception as exc:
+                    print("command %s failed: %r" % (action, exc), file=sys.stderr, flush=True)
+        await asyncio.sleep(CMD_POLL_S)
+
+
 async def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--home", required=True)
     writer = Writer(parser.parse_args().home)
+    manager = await SessionManager.request_async()
     threading.Thread(target=audio_loop, args=(writer,), daemon=True).start()
     threading.Thread(target=watch_beat, args=(writer,), daemon=True).start()
+    asyncio.ensure_future(commands(writer, manager))
 
     while not writer.stopping():
         try:
-            await sample(writer)
+            await sample(writer, manager)
             writer.tick()
         except Exception as exc:  # a player can vanish mid-call; keep the last good state
             print("sample failed: %r" % (exc,), file=sys.stderr, flush=True)

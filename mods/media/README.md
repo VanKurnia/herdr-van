@@ -1,8 +1,9 @@
 # Now playing
 
 The bottom row of the sidebar: cover art, title and artist of whatever plays on
-this machine, over a small live spectrum. It reads the Windows media session, so
-it works with any player that reports to it — Spotify, browsers, the packaged
+this machine, with the clock on the title line and previous / play-pause / next on
+the artist line, over a small live spectrum. It reads the Windows media session,
+so it works with any player that reports to it — Spotify, browsers, the packaged
 music apps — and shows `Nothing playing` when none does.
 
 ## Setup
@@ -64,7 +65,7 @@ writer, and the constants `PROTOCOL_V`, `LEVELS_EVERY_S` and `BEAT_STALE_S`.
 
 ```
 helper -> state.json ("v": 1), levels.json, tick, cover-*.png
-mod    -> beat
+mod    -> beat, cmd
 ```
 
 `state.json` carries its protocol version as `"v"`, stamped after the record's
@@ -81,6 +82,25 @@ it goes 90 s stale the helper exits, which cleans up after a window that closed
 without running `close()`. In the other direction the helper's `tick` going stale
 is what makes the panel restart it; that check runs on a 5 s timer of its own, so
 the state read does not carry it.
+
+### The clock and the transport
+
+The title line ends with `elapsed / total`, and the artist line ends with
+previous, play/pause and next. Both come from data the helper already publishes:
+`pos` and `dur` (seconds) are read from the session's timeline on every poll. No
+duration means the player has no timeline, so the clock is left out rather than
+shown frozen; a duration with no position shows the length alone. A position that
+lags is counted from the moment its sample was read, and re-anchors on every new
+body. A silent passage stops the bars, and with them the redraws that would
+advance the clock, so it also ticks on a 1 s timer.
+
+A click is written to `cmd` as `{"n": <epoch ms>, "do": "prev"|"toggle"|"next"}`
+and the helper polls that file every 150 ms, applies the click to the current
+session and republishes `state.json`. The timestamp is the click's identity: the
+helper applies only a number above the one it last saw, and adopts whatever is in
+the file when it starts, so a restart cannot replay the last click. Buttons are
+drawn only for a live session on a current payload — an outdated helper would
+ignore them.
 
 `launch.ps1` starts the helper hidden, reuses one that is already running (a
 window may have closed without stopping it), and answers `no-python` or

@@ -1,4 +1,4 @@
-"""The files this mod publishes: one writer per file, atomic bodies, a throttle on the spectrum."""
+"""The files this mod publishes, and the one command it takes back: the transport clicks."""
 
 import hashlib
 import json
@@ -8,6 +8,7 @@ import time
 BEAT_STALE_S = 90.0  # the mod beats every 10 s
 PROTOCOL_V = 1  # state.json's shape; bump when a field is renamed or removed
 LEVELS_EVERY_S = 0.1  # the spectrum, published ~10 times a second
+COMMANDS = {"prev", "toggle", "next"}
 
 
 class Writer:
@@ -15,6 +16,10 @@ class Writer:
         self.dir = os.path.join(home, "data", "media")
         os.makedirs(self.dir, exist_ok=True)
         self.beat_path = os.path.join(self.dir, "beat")
+        self.cmd_path = os.path.join(self.dir, "cmd")
+        # A click made before this process started is history, not a request: adopt it as seen so
+        # a helper restart cannot replay the last one.
+        self.seen_command = self._stamp()
         self.state = None  # the last body written, to skip identical writes
         self.levels = None
         self.levels_at = 0.0
@@ -29,6 +34,32 @@ class Writer:
         except OSError:
             return False  # the mod has not written one yet
         return age > BEAT_STALE_S
+
+    def _stamp(self):
+        """The click in `cmd` right now, or 0 when there is none to read."""
+        try:
+            with open(self.cmd_path, encoding="utf-8") as fh:
+                return int(json.load(fh)["n"])
+        except (OSError, ValueError, TypeError, KeyError):
+            return 0
+
+    def take_command(self):
+        """The mod's last transport click, once. Written by the mod, never by this process.
+
+        The click carries a timestamp rather than a counter, so a number is never
+        reused across a restart of either side.
+        """
+        try:
+            with open(self.cmd_path, encoding="utf-8") as fh:
+                body = json.load(fh)
+            stamp = int(body["n"])
+            action = body["do"]
+        except (OSError, ValueError, TypeError, KeyError):
+            return None
+        if action not in COMMANDS or stamp <= self.seen_command:
+            return None
+        self.seen_command = stamp
+        return action
 
     def _atomic(self, name, body):
         """Write text through a temp file, so the mod never reads a partial body."""

@@ -6,7 +6,7 @@
 // writer, because herdr's file write is a read-modify-write that needs the
 // content it expects to find:
 //   helper -> state.json, levels.json, tick, cover-*.png
-//   mod    -> beat, whose staleness tells the helper the window is gone
+//   mod    -> beat, whose staleness tells the helper the window is gone; cmd, a transport click
 // close() kills the helper; a window that died without closing is caught by the
 // beat going stale.
 //
@@ -15,7 +15,7 @@
 
 import { View } from "gpui-kit";
 import { checking, layout, props, theme } from "herdr";
-import { readText, writeBeat } from "./state.js";
+import { readText, writeBeat, writeCommand } from "./state.js";
 import { backoffMs, startHelper, stopHelper } from "./helper.js";
 import { row } from "./ui.js";
 
@@ -44,15 +44,23 @@ function findNode(node, id) {
   return null;
 }
 
+// The row's clock: the sample the player gave, plus what has passed since it was read, because a
+// player's own position can lag or freeze. Zero means the player reports no position at all.
+const elapsedPos = (base, sinceMs) => (base > 0 ? base + Math.max(0, sinceMs) / 1000 : 0);
+
 export default class Media extends View {
   init(_props, cx) {
     this.body = null; // last state.json body, to skip identical reads
     this.state = null;
+    // When the body just read was sampled: the player's own position can lag or freeze, so the row
+    // counts from here between two bodies.
+    this.posAt = 0;
     this.levelsBody = null;
     this.levels = [];
     this.width = 268;
     this.pid = null;
     this.beatBody = null; // null: the file has not been adopted yet
+    this.cmdBody = null; // the same, for the transport clicks
     this.launchedAt = 0;
     this.launchFailures = 0;
     this.why = null; // the launcher's answer when it could not start the helper
@@ -64,6 +72,10 @@ export default class Media extends View {
     cx.timer.every(5000, (cx) => this.alive(cx));
     cx.timer.every(LEVELS_MS, (cx) => this.readLevels(cx));
     cx.timer.every(BEAT_MS, (cx) => this.beat(cx));
+    // A silent passage stops the bars, and with them the redraws the clock rides on.
+    cx.timer.every(READ_MS, (cx) => {
+      if (this.state?.playing && this.state?.dur > 0) cx.notify();
+    });
   }
 
   hidden() {
@@ -102,6 +114,26 @@ export default class Media extends View {
     });
   }
 
+  // A click goes to the helper, the only process that can talk to the player: it applies the click
+  // and republishes state, so the row shows the player's answer rather than an assumption.
+  send(action, cx) {
+    if (this.parked) return;
+    const body = JSON.stringify({ n: Date.now(), do: action });
+    cx.spawn(async (cx) => {
+      try {
+        if (this.cmdBody === null) this.cmdBody = await readText("cmd");
+        await writeCommand(body, this.cmdBody);
+        this.cmdBody = body;
+        // The player answers late: this one needs about a second before it reports the new status,
+        // which is longer than the helper takes to publish it.
+        cx.timer.after(300, (cx) => this.read(cx));
+        cx.timer.after(900, (cx) => this.read(cx));
+      } catch {
+        this.cmdBody = null; // changed under us: adopt it again on the next click
+      }
+    });
+  }
+
   spawnHelper(cx) {
     if (Date.now() - this.launchedAt < backoffMs(this.launchFailures)) return;
     this.launchedAt = Date.now();
@@ -132,6 +164,7 @@ export default class Media extends View {
       } catch {
         this.state = null;
       }
+      this.posAt = Date.now();
       cx.notify();
     });
   }
@@ -187,6 +220,10 @@ export default class Media extends View {
     // Only the dependency case has an action worth carrying; the other two are already sentences.
     const hint = offline && this.why === "no-deps" ? PIP : "";
 
+    // Buttons the helper would ignore are worse than none: an outdated payload has its own
+    // sentence in the row instead.
+    const transport = session && !offline && !stale;
+
     return row({
       t,
       compact: this.width < COMPACT_PX,
@@ -198,6 +235,14 @@ export default class Media extends View {
       hint,
       cover: this.state?.cover,
       levels: this.levels,
+      // A player that reports no position cannot be counted from: it stays zero and the row shows
+      // the length alone, rather than a clock that started when the row first looked.
+      pos: elapsedPos(Number(this.state?.pos) || 0, playing ? Date.now() - this.posAt : 0),
+      dur: Number(this.state?.dur) || 0,
+      transport,
+      onPrev: (cx) => this.send("prev", cx),
+      onToggle: (cx) => this.send("toggle", cx),
+      onNext: (cx) => this.send("next", cx),
       onWidth: (size, cx) => {
         if (Math.round(size.width) === Math.round(this.width)) return;
         this.width = size.width;
