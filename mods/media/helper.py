@@ -36,11 +36,11 @@ from winrt.windows.storage.streams import Buffer, InputStreamOptions  # noqa: E4
 POLL_S = 1.0
 BEAT_STALE_S = 90.0  # the mod beats every 10 s
 
-# Spectrum: log-spaced bands from 40 Hz to 16 kHz, published ~20 times a second.
+# Spectrum: log-spaced bands from 40 Hz to 16 kHz, published ~10 times a second.
 BANDS = 28
 RATE = 44100
 BLOCK = 2048
-LEVELS_EVERY_S = 0.05
+LEVELS_EVERY_S = 0.1
 LOW_HZ = 40.0
 HIGH_HZ = 16000.0
 FLOOR_DB = -55.0  # a band quieter than this reads as empty
@@ -84,6 +84,8 @@ class Writer:
         self.levels = None
         self.levels_at = 0.0
         self.playing = False
+        self.cover = None  # last cover path published for this track
+        self.cover_key = None  # the track that path belongs to
 
     def stopping(self):
         # Written by the mod, never by this process.
@@ -160,6 +162,18 @@ async def sample(writer):
     props = await session.try_get_media_properties_async()
     status = PLAYBACK.get(int(session.get_playback_info().playback_status), "unknown")
     writer.playing = status == "playing"
+    # The artwork stream is only worth opening when the track changed, or when this track has no
+    # art yet (players publish the picture a moment after the metadata, so keep trying while it
+    # is missing). Reading and hashing it on every poll cost a stream read and a sha1 per second.
+    key = (
+        (props.title or "").strip(),
+        (props.artist or "").strip(),
+        (props.album_title or "").strip(),
+        session.source_app_user_model_id,
+    )
+    if key != writer.cover_key or writer.cover is None:
+        writer.cover = writer.save_cover(await read_thumbnail(props.thumbnail))
+        writer.cover_key = key
     writer.publish(
         {
             "session": True,
@@ -169,7 +183,7 @@ async def sample(writer):
             "status": status,
             "playing": writer.playing,
             "app": session.source_app_user_model_id or "",
-            "cover": writer.save_cover(await read_thumbnail(props.thumbnail)),
+            "cover": writer.cover,
         }
     )
 

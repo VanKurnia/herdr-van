@@ -31,8 +31,9 @@ function findNode(node, id) {
 
 const COVER_PX = 46;
 const BARS_H = 16;
+const COMPACT_PX = 160; // below this the row is cover-only: no text, no bars
 const READ_MS = 1000;
-const LEVELS_MS = 60;
+const LEVELS_MS = 120;
 const BEAT_MS = 10000;
 const TICK_STALE_S = 15; // the helper ticks every second
 const RETRY_MS = 20000; // wait after a failed launch, doubling
@@ -55,6 +56,7 @@ export default class Media extends View {
     this.parked = this.hidden();
     if (!this.parked) this.spawnHelper(cx);
     cx.timer.every(READ_MS, (cx) => this.read(cx));
+    cx.timer.every(5000, (cx) => this.alive(cx));
     cx.timer.every(LEVELS_MS, (cx) => this.readLevels(cx));
     cx.timer.every(BEAT_MS, (cx) => this.beat(cx));
   }
@@ -132,9 +134,6 @@ export default class Media extends View {
     if (this.parked) return;
     cx.spawn(async (cx) => {
       const body = await readTextFile(mediaFile("state.json")).catch(() => "");
-      const tick = await readTextFile(mediaFile("tick")).catch(() => "");
-      // The one thing a timer must act on: a helper that is gone.
-      if (Math.floor(Date.now() / 1000) - Number(tick) > TICK_STALE_S) this.spawnHelper(cx);
       if (body === this.body) return;
       this.body = body;
       try {
@@ -146,9 +145,21 @@ export default class Media extends View {
     });
   }
 
-  // Bars only move while a track plays, so a paused panel costs no reads.
+  // The tick only has to prove the helper is alive inside TICK_STALE_S, so it gets a timer of its
+  // own instead of riding along with every state read.
+  alive(cx) {
+    if (this.parked) return;
+    cx.spawn(async (cx) => {
+      const tick = await readTextFile(mediaFile("tick")).catch(() => "");
+      // The one thing a timer must act on: a helper that is gone.
+      if (Math.floor(Date.now() / 1000) - Number(tick) > TICK_STALE_S) this.spawnHelper(cx);
+    });
+  }
+
+  // Bars only move while a track plays, and only when the bars are on screen: a folded
+  // sidebar (< 160 px) does not draw them at all.
   readLevels(cx) {
-    if (this.parked || !this.state?.playing) return;
+    if (this.parked || !this.state?.playing || this.width < COMPACT_PX) return;
     cx.spawn(async (cx) => {
       const body = await readTextFile(mediaFile("levels.json")).catch(() => "");
       if (body === this.levelsBody) return;
@@ -173,7 +184,7 @@ export default class Media extends View {
         ? this.state.title || "Untitled"
         : "Nothing playing";
     const subtitle = offline ? "see mods/media/README.md" : session ? this.state.artist || "" : "";
-    const compact = this.width < 160;
+    const compact = this.width < COMPACT_PX;
 
     const art = this.state?.cover
       ? image(this.state.cover).w(COVER_PX).h(COVER_PX).rounded(6).flex_none()
@@ -206,9 +217,13 @@ export default class Media extends View {
           .items_end()
           .gap(2)
           .children(
-            this.levels.map((raw) => {
+            this.levels.map((raw, i) => {
               const level = playing && !offline ? Math.min(1, Math.max(0, raw)) : 0;
               return div()
+                .id(`band-${i}`)
+                // GPUI eases the height between frames, so the data rate no longer sets how
+                // smooth the bars look — and no redraw is needed to animate them.
+                .transition("height", 80)
                 .flex_1()
                 .h(Math.max(1, Math.round(level * BARS_H)))
                 .rounded(1)
