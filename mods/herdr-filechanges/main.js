@@ -525,7 +525,7 @@ export default class HerdrFileChanges extends View {
     // unwrapped, they stay on one line and truncate.
     return h_flex().flex_none().px(6).gap(6).when(Boolean(tint), (e) => e.bg(tint))
       .when(wrap, (e) => e.items_start().py(2)).when(!wrap, (e) => e.items_center().h(ROW_H))
-      .child(div().w(30).flex_none().text_right().text_size(10.5).text_color(t.dim)
+      .child(div().min_w(30).flex_none().text_right().text_size(10.5).text_color(t.dim)
         .child(row.number === undefined ? "" : String(row.number)))
       .child(h_flex().flex_1().min_w(0).gap(0).text_size(11)
         .when(wrap, (e) => e.flex_wrap()).when(!wrap, (e) => e.truncate())
