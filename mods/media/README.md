@@ -36,7 +36,7 @@ in this folder or reopening the window makes it immediate.
 
 The music-note button in the sidebar footer toggles the row — middle of the three,
 between the quota gauge and the settings gear. Off hides the block and gives its
-96 px back to the lists; the setting is part of the layout, so it survives a
+80 px back to the lists; the setting is part of the layout, so it survives a
 restart.
 
 Hiding a block does not stop its mod: Herdr keeps the copy, and its timers, alive.
@@ -108,6 +108,10 @@ the panel.
 - The spectrum shows what the machine actually plays, via WASAPI loopback on the
   default output device. It is not a per-player signal, so muted system audio
   reads as silence.
+- Each bar takes the theme colour of the band it stands for, read off the same log
+  scale as the bands (40 Hz–16 kHz): sub-bass below 60 Hz, bass to 250, vocal to
+  2 kHz, treble above. `BAND_STOPS` in `ui.js` holds the four stops and their
+  theme colour names.
 - Cover art is stored under a content-addressed name so a new track never shows a
   stale decoded image, and the previous cover is pruned.
 - The bars refresh about 8 times a second while a track plays, and not at all

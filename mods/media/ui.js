@@ -6,6 +6,22 @@ import { h_flex, v_flex } from "gpui-base";
 const COVER_PX = 46;
 const BARS_H = 16;
 
+// The bars are log-spaced over this range (levels.py), so a bar's band follows the
+// frequency it stands for and keeps its place if the bar count changes.
+const LOW_HZ = 40;
+const HIGH_HZ = 16000;
+const BAND_STOPS = [
+  { upTo: 60, color: "ansi5" }, // sub-bass: the deepest hue
+  { upTo: 250, color: "ansi1" }, // bass: warm and heavy
+  { upTo: 2000, color: "ansi2" }, // vocal: the middle, where the voice sits
+  { upTo: Infinity, color: "ansi6" }, // treble: air and cymbals
+];
+
+function bandColor(index, count, t) {
+  const hz = LOW_HZ * (HIGH_HZ / LOW_HZ) ** ((index + 0.5) / count);
+  return t[BAND_STOPS.find((band) => hz < band.upTo).color];
+}
+
 // Bars scale with the sidebar: each one is flex_1 of what the row has left.
 export function bars(levels, playing, offline, t) {
   return levels.length
@@ -25,7 +41,7 @@ export function bars(levels, playing, offline, t) {
               .flex_1()
               .h(Math.max(1, Math.round(level * BARS_H)))
               .rounded(1)
-              .bg(level > 0.06 ? t.accent : t.border);
+              .bg(level > 0.06 ? bandColor(i, levels.length, t) : t.border);
           }),
         )
     : div().w_full().h(1).bg(t.border);
@@ -59,9 +75,13 @@ export function row({ t, compact, offline, playing, session, title, subtitle, hi
   return v_flex()
     .id("media")
     .size_full()
-    .justify_center()
     .gap(6)
     .px(12)
+    .pb(6)
+    // The cover keeps the same gap to the bars above as to the footer below. The bars
+    // grow upward from it; the rail keeps its cover centred.
+    .when(compact, (el) => el.justify_center())
+    .when(!compact, (el) => el.justify_end())
     .on_size_change((size, cx) => onWidth(size, cx))
     .when(Boolean(hint), (el) => el.tooltip(hint))
     .when(!compact, (el) => el.child(bars(levels, playing, offline, t)))
