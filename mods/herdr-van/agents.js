@@ -28,9 +28,16 @@ function title(tab, l) {
 const RANK = { blocked: 4, done: 3, working: 2, idle: 1 };
 // A sub-agent without a pane isn't in agents(): its raw word, error counting as
 // blocked. It's never done: it reports to its parent, and the parent's done is the news.
+// One with a pane is in agents() too, and keeps its own status.
 const kidStatus = (k, listed) => {
-  const s = listed.get(k.address) ?? k.status;
-  return s === "error" ? "blocked" : s === "done" ? "idle" : s;
+  const s = listed.get(k.address);
+  if (s) return s;
+  return k.status === "error" ? "blocked" : k.status === "done" ? "idle" : k.status;
+};
+// A helper's done is its own row's news: it doesn't pull a working parent out of Working.
+const kidRank = (k, listed) => {
+  const s = kidStatus(k, listed);
+  return RANK[s === "done" ? "idle" : s] ?? 0;
 };
 const SORTS = [
   { id: "priority", label: "Priority", icon: "clock" },
@@ -329,7 +336,7 @@ export default class Agents {
       else panesByTab.set(p.tab, [p]);
     }
     const tabsById = new Map(spaces().flatMap((s) => s.tabs).map((tab) => [tab.id, tab]));
-    const urgency = new Map(list.map((a) => [a.address, Math.max(this.rank(a), ...this.tree(kidsOf, a.address).map((s) => RANK[kidStatus(s.t, this.listed)] ?? 0))]));
+    const urgency = new Map(list.map((a) => [a.address, Math.max(this.rank(a), ...this.tree(kidsOf, a.address).map((s) => kidRank(s.t, this.listed)))]));
     const rankOf = (a) => urgency.get(a.address);
     if (byPriority) list = [...list].sort((x, y) => rankOf(y) - rankOf(x) || this.since(y) - this.since(x) || y.seq - x.seq);
     this.adoptPins(all);
