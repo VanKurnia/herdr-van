@@ -3,7 +3,7 @@
 // known. Click to switch, right-click for its menu, drag to reorder.
 
 import { div, svg } from "gpui-kit";
-import { v_flex, h_flex } from "gpui-base";
+import { v_flex, h_flex, ScrollHandle } from "gpui-base";
 import { spaces, machines, panes, run, openOverlay, exec, hc, theme, shared, setShared, watchFolder, window, notify } from "herdr";
 import { avatar, claimSidebarHover, narrow, onSidebar, place, spaceColors, spaceFill, icon, sectionTitle, treeLines } from "./lib.js";
 import { readDoc, snapshotDoc, saveSpace, saveAuto, signature, list, writeList, liveRecords, MODE, dropRecord, openWorkspace } from "./workspace.js";
@@ -70,6 +70,9 @@ export default class Spaces {
     // A damaged value is dropped rather than thrown: losing the folded machines is cheap, losing
     // the sidebar is not.
     try { this.folded = new Set(JSON.parse(localStorage.getItem("machines.folded") ?? "[]")); } catch { this.folded = new Set(); }
+    this.scroll = ScrollHandle.new();
+    this.revealed = null; // the space id the list last scrolled to
+    this.revealedAt = -1; // …and the row it stood on, so a card that moves is revealed too
     this.refreshMachines(cx);
     cx.timer.every(15000, cx => this.refreshMachines(cx));
     // Whatever `due` waits for needs no faster tick than this; the rest is event-driven.
@@ -318,11 +321,18 @@ export default class Spaces {
     return out;
   }
 
-  // The rows, under a header per machine once one isn't this computer.
+  // The rows, under a header per machine once one isn't this computer. One array, with
+  // `this.activeAt` marking where the active space's card landed: headers, loading and empty rows
+  // sit between the cards, so that number is not the space's index.
   grouped(t, collapsed) {
     const rows = this.ordered();
+    const out = [];
+    this.activeAt = -1; // the active space's row, -1 when no drawn row is the active space
     // Runners live inside their space's card, so a row draws itself alone.
-    const draw = (r) => (collapsed ? [this.compact(r, t)] : [this.row(r, t)]);
+    const draw = (r) => {
+      if (r.w.active) this.activeAt = out.length;
+      out.push(collapsed ? this.compact(r, t) : this.row(r, t));
+    };
     const remote = [...new Set([...rows.map(r => r.w.machine).filter(Boolean), ...this.machines.map(m => m.name)])].sort();
     const loading = m => {
       const layout = machines().find(k => k.name === m)?.layout;
@@ -330,9 +340,13 @@ export default class Spaces {
         || spaces().some(s => (s.machine ?? null) === m && !this.shown.has(s.id));
     };
     const loadingRow = m => div().id(`machine-loading-${m ?? "local"}`).h(28).flex_none().px(8).text_size(12).text_color(t.dim).child(collapsed ? "…" : "Loading…");
-    if (!remote.length) return loading(null) && !rows.length ? [loadingRow(null)] : rows.flatMap(draw);
+    if (!remote.length) {
+      if (loading(null) && !rows.length) out.push(loadingRow(null));
+      else rows.forEach(draw);
+      return out;
+    }
     const machineNames = [null, ...remote];
-    return machineNames.flatMap((m) => {
+    for (const m of machineNames) {
       const mine = rows.filter((r) => (r.w.machine ?? null) === m);
       const machine = this.machines.find(k => k.name === m);
       const connected = !m || machine?.state === "connected";
@@ -355,8 +369,12 @@ export default class Spaces {
         .text_size(12).text_color(t.dim).hover(s => s.bg(t.hover).text_color(t.foreground))
         .on_click(() => run("space.new", m ? { machine: m } : {}))
         .child(svg("mods/herdr-van/icons/plus.svg").size(12)).when(!collapsed, el => el.child("New space there"));
-      return [head, ...(folded ? [] : mine.length ? mine.flatMap(draw) : [loading(m) ? loadingRow(m) : empty])];
-    });
+      out.push(head);
+      if (folded) continue;
+      if (mine.length) mine.forEach(draw);
+      else out.push(loading(m) ? loadingRow(m) : empty);
+    }
+    return out;
   }
 
   // The row's second line, only what's unusual: "herdr \u00b7 spike \u21912 \u21931". The repo
@@ -654,6 +672,15 @@ export default class Spaces {
       .tooltip(mode === "all" ? "Showing saved workspaces" : "Showing open spaces")
       .on_click(() => setShared(MODE, mode === "all" ? "active" : "all"))
       .child(svg("mods/herdr-van/icons/layers.svg").size(13));
+    const list = this.grouped(t, collapsed);
+    // Bring the active space into view when it, or its place in the list, changes; a row already
+    // in view stays put.
+    const active = sp.find((s) => s.active)?.id ?? null;
+    if (active !== this.revealed || this.activeAt !== this.revealedAt) {
+      this.revealed = active;
+      this.revealedAt = this.activeAt;
+      if (this.activeAt >= 0) this.scroll.scroll_to_item(this.activeAt);
+    }
     return v_flex().id("sidebar-spaces").size_full().min_h(0).text_size(13)
       .on_hover(claimSidebarHover("spaces"))
       .child(h_flex().h(31).pl(10).pr(10).items_center().text_color(t.accent)
@@ -663,8 +690,11 @@ export default class Spaces {
           icon: "mods/herdr-van/icons/monitor.svg",
           right: onSidebar() ? h_flex().gap(4).items_center().child(modeBtn).child(add) : null,
         }))))
-      .child(v_flex().flex_1().min_h(0).px(8).pb(14).overflow_y_scrollbar().mode("always")
+      .child(v_flex().flex_1().min_h(0).px(8).pb(14).overflow_y_scrollbar().mode("always").track_scroll(this.scroll)
         .on_mouse_up("left", (_e, cx) => { this.pressed = null; this.over = null; cx.notify(); })
-        .children([...this.grouped(t, collapsed), ...this.savedRows(t, collapsed)]));
+                 // A block above growing, or the window resizing, shrinks this list and can push the active
+         // space out without changing which space is active.
+         .on_size_change((_size, cx) => { if (this.activeAt >= 0) { this.scroll.scroll_to_item(this.activeAt); cx.notify(); } })
+         .children([...list, ...this.savedRows(t, collapsed)]));
   }
 }
