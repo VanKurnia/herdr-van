@@ -35,8 +35,8 @@ in this folder or reopening the window makes it immediate.
 
 ## Turning it off
 
-The music-note button in the sidebar footer toggles the row — middle of the three,
-between the quota gauge and the settings gear. Off hides the block and gives its
+The music-note button in the sidebar footer toggles the row — the left of the two,
+beside the settings gear. Off hides the block and gives its
 80 px back to the lists; the setting is part of the layout, so it survives a
 restart.
 

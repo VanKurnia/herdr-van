@@ -86,19 +86,11 @@ export default class Chrome {
       // The prefix mod publishes its waiting state; the badge is that state and
       // nothing else, so an idle footer says nothing about the prefix.
       const armed = Boolean(shared("prefix.armed"));
-      // The gear, the quota panel's toggle, and the prefix badge: an accent chip
+      // The now-playing toggle, the gear, and the prefix badge: an accent chip
       // reading `⌥ Prefix`, right end.
       // On the rail it would crowd the gear, so the agents list's strip carries the
-      // glyph alone instead (agents.js) and this row stays one gear; the quota
-      // toggle is left out there for the same reason.
-      const quota = findBlock("quota-panel");
-      const quotaOn = Boolean(quota) && !quota.hidden;
-      const gauge = h_flex().id("quota-toggle").size(28).flex_none().flex().items_center().justify_center().rounded(8)
-        .text_color(quotaOn ? t.accent : t.muted).cursor_pointer()
-        .tooltip(quotaOn ? "Hide the Quota panel" : "Show the Quota panel")
-        .hover(s => s.bg(t.hover).text_color(t.foreground))
-        .on_click(() => run("layout.toggle", { id: "quota-panel" }))
-        .child(svg("mods/quota/gauge.svg").size(14));
+      // glyph alone instead (agents.js) and this row stays one gear; the
+      // now-playing toggle is left out there for the same reason.
       const media = findBlock("media");
       const mediaOn = Boolean(media) && !media.hidden;
       const nowPlaying = h_flex().id("media-toggle").size(28).flex_none().flex().items_center().justify_center().rounded(8)
@@ -121,7 +113,6 @@ export default class Chrome {
       return v_flex().id("sidebar-footer").size_full().border_t(1).border_color(t.border).px(8).justify_center()
         .on_hover(claimSidebarHover("footer"))
         .child(h_flex().w_full().items_center().gap(2)
-          .when(!collapsed, el => el.child(gauge))
           .when(!collapsed, el => el.child(nowPlaying))
           .child(gear)
           .child(div().flex_1())

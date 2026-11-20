@@ -9,8 +9,8 @@ import { closeOverlay, layout, props, run, shared, setShared, spaces, window } f
 // This layout's first block, so no tree walk is needed.
 export const sidebar = () => layout()?.children?.find((n) => n.id === "sidebar");
 
-// Any node by id, wherever the layout nests it: the quota panel sits in the row
-// beside the panes, not at the root the way the sidebar does.
+// Any node by id, wherever the layout nests it: the now-playing row sits in the
+// sidebar column, not at the root the way the sidebar block does.
 const walk = (node, id) => {
   if (!node) return null;
   if (node.id === id) return node;
