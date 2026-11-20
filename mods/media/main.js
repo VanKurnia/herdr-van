@@ -39,10 +39,12 @@ const TICK_STALE_S = 15; // the helper ticks every second
 const RETRY_MS = 20000; // wait after a failed launch, doubling
 const RETRY_MAX_MS = 300000; // then keep trying slowly: dependencies can arrive later
 const OFFLINE_AFTER = 2; // failed launches before the row says why it is empty
+const PROTOCOL_V = 1; // the state.json shape this mod reads; mirrors helper.py's PROTOCOL_V
 
 export default class Media extends View {
   init(_props, cx) {
     this.body = null; // last state.json body, to skip identical reads
+    this.stale = false; // the payload is not this mod's protocol version
     this.state = null;
     this.levelsBody = null;
     this.levels = [];
@@ -51,6 +53,7 @@ export default class Media extends View {
     this.beatBody = null; // null: the file has not been adopted yet
     this.launchedAt = 0;
     this.launchFailures = 0;
+    this.why = null; // launch.ps1's answer when it could not start the helper
     this.parked = false;
     if (checking()) return;
     this.parked = this.hidden();
@@ -118,6 +121,7 @@ export default class Media extends View {
       } catch (err) {
         why = err?.message ?? String(err);
       }
+      this.why = pid === null ? why : null; // kept for the row: "no-python", "no-deps", or an error
       if (pid === null) {
         this.launchFailures += 1;
         console.log("media: helper did not start:", why);
@@ -138,8 +142,12 @@ export default class Media extends View {
       this.body = body;
       try {
         this.state = JSON.parse(body);
+        // A helper that predates this field (or a future one) keeps running until it exits: it is a
+        // separate process, so the on-disk helper.py can be newer than the payload being served.
+        this.stale = this.state?.v !== PROTOCOL_V;
       } catch {
         this.state = null;
+        this.stale = false;
       }
       cx.notify();
     });
@@ -183,7 +191,26 @@ export default class Media extends View {
       : session
         ? this.state.title || "Untitled"
         : "Nothing playing";
-    const subtitle = offline ? "see mods/media/README.md" : session ? this.state.artist || "" : "";
+    // launch.ps1 answers "no-python" or "no-deps"; anything else is a real error worth quoting.
+    const reason = offline
+      ? this.why === "no-python"
+        ? "python is not installed"
+        : this.why === "no-deps"
+          ? "module deps missing"
+          : "helper could not start"
+      : null;
+    const subtitle = offline
+      ? reason
+      : this.stale
+        ? "helper outdated — restart it"
+        : session
+          ? this.state.artist || ""
+          : "";
+    // Only the dependency case has an action worth carrying; the other two are already sentences.
+    const hint =
+      offline && this.why === "no-deps"
+        ? 'python -m pip install --target "%USERPROFILE%\\.config\\herdr-app\\mods\\media\\vendor" winrt-runtime winrt-Windows.Media.Control winrt-Windows.Storage.Streams winrt-Windows.Foundation winrt-Windows.Storage soundcard numpy'
+        : "";
     const compact = this.width < COMPACT_PX;
 
     const art = this.state?.cover
@@ -243,6 +270,7 @@ export default class Media extends View {
         this.width = size.width;
         cx.notify();
       })
+      .when(Boolean(hint), (el) => el.tooltip(hint))
       .when(!compact, (el) => el.child(bars))
       .child(
         h_flex()

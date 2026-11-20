@@ -35,6 +35,7 @@ from winrt.windows.storage.streams import Buffer, InputStreamOptions  # noqa: E4
 
 POLL_S = 1.0
 BEAT_STALE_S = 90.0  # the mod beats every 10 s
+PROTOCOL_V = 1  # state.json's shape; bump when a field is renamed or removed
 
 # Spectrum: log-spaced bands from 40 Hz to 16 kHz, published ~10 times a second.
 BANDS = 28
@@ -107,7 +108,8 @@ class Writer:
         self._atomic("tick", str(int(time.time())))
 
     def publish(self, record):
-        body = json.dumps(record, ensure_ascii=False)
+        # One field every body carries, so the mod can tell an older helper's payload from its own.
+        body = json.dumps({**record, "v": PROTOCOL_V}, ensure_ascii=False)
         if body == self.state:
             return
         self.state = body
