@@ -76,12 +76,44 @@ Renaming or removing a field means bumping `PROTOCOL_V` in both places —
 `store.py`, which stamps it, and `main.js`, which reads it. Adding an optional
 field does not.
 
+The audio loop drains the loopback recorder only while a track plays *and* somebody is drawing the
+bars. Holding an open recorder costs nothing; calling `record()` on it costs ~6 % of a core, so a
+paused helper sleeps in 50 ms slices and publishes silence — which the file protocol dedupes to no
+writes — instead of draining audio nobody hears. The first block after a resume is dropped: a
+paused loopback buffer still holds pre-pause audio.
+
+"Somebody is drawing" is the beat's second field: the mod writes `<epoch> 0` once its row is too
+narrow for the bars (below 160 px) or parked, and `<epoch> 1` when they are back, and the helper
+answers `Writer.wanted()`. A folded sidebar used to cost the same ~11 % of a core as a visible one
+for a spectrum nothing could show; with the flag it costs ~1.3 % (measured: 11.5 % expanded, 1.3 %
+folded, 12.7 % after restoring). A beat with no second field, from an older mod, means yes.
+
+The levels fall in real time, not per block: `release()` in `levels.py` turns a monotonic clock's
+delta into the fall (0.25 s time constant); a rise lands at once, so a kick is not smeared. A
+per-block decay tied the fall to the device's block rate, so a track fell faster on a 48 kHz device
+than on a 44.1 kHz one, and a dropped block doubled the step.
+
 Each file has one writer, because Herdr's `writeTextFile` is a read-modify-write
 that needs the content it expects to find. The mod's `beat` is a heartbeat: when
 it goes 90 s stale the helper exits, which cleans up after a window that closed
 without running `close()`. In the other direction the helper's `tick` going stale
 is what makes the panel restart it; that check runs on a 5 s timer of its own, so
-the state read does not carry it.
+the state read does not carry it. `tick` is written by the helper's beat-watching
+thread, not beside the media sample: a player call that never returns used to stop
+the tick while the process stayed up, so the panel relaunched a helper that was
+still running, forever, over a frozen track. `STALE_RETRIES` launches without the
+tick coming back mean the process is up but wedged on a player call, which the
+row says once as `helper not responding`; the panel then kills it, because a
+wedged helper still holds the home's lock and a replacement cannot start until it
+is gone. Launches keep going at the backoff's pace after that, because missing
+dependencies can arrive after the panel did. A rename that loses a race with the
+mod reading the same file is retried rather than raised: an exception there would
+kill the thread that keeps the file fresh, and nothing would rewrite it. `state.json` and
+new cover art wake the mod
+through a folder watch (~150 ms), so a pause or a track change shows promptly.
+`levels.json` stays on its 80 ms timer (`LEVELS_MS`) — the watch coalesces at
+~155 ms, slower than the bars read. The watch compares basenames only, so `tick`, `beat`, `cmd`
+and `helper.lock` arriving in the same batch never trigger a re-read.
 
 ### The clock and the transport
 
@@ -108,6 +140,14 @@ window may have closed without stopping it), and answers `no-python` or
 the row turns into `python is not installed`, `module deps missing` (hover it for
 the pip line) or `helper could not start`.
 
+The reuse scan is scoped to the app home that is launching. One helper per app
+home is enforced by `data/media/helper.lock`, opened with `O_TEMPORARY` and held
+for the helper's whole life: a second helper for the same home prints
+`already running` and exits, and the supervisor reports the pid the lock names.
+The OS deletes the file when the handle closes — a crash included — so a lock
+cannot be left behind and a competitor cannot take it in the gap between closing
+and unlinking. A lock older than 15 s with no living owner is still taken over.
+
 ## Tests
 
 The spectrum maths and the file protocol are plain Python, so they are tested
@@ -128,15 +168,36 @@ the panel.
 - The spectrum shows what the machine actually plays, via WASAPI loopback on the
   default output device. It is not a per-player signal, so muted system audio
   reads as silence.
-- Each bar takes the theme colour of the band it stands for, read off the same log
-  scale as the bands (40 Hz–16 kHz): sub-bass below 60 Hz, bass to 250, vocal to
-  2 kHz, treble above. `BAND_STOPS` in `ui.js` holds the four stops and their
-  theme colour names.
+- The spectrum is one painted curve, not a row of bars: a Catmull-Rom line through the 28 levels,
+  with the same curve closed along the baseline underneath and filled by a gradient of the band's
+  colour. Colour is sampled per segment and eased across the seams between the four zones, so the
+  hue runs violet→red→green→cyan instead of switching at a boundary (`FADE` in `ui.js` sets how many
+  bands either side of a seam the two colours blend across). A segment carries its own stroke and
+  its own fill: 54 painted pieces per render.
+- The seam blend is in polar OKLCH (`blend()` in `ui.js`), not in channels. Blending channels
+  passes through grey: red→green lands on tan (chroma 0.070) where interpolating the hue as an
+  angle lands on amber (0.149), and green→cyan lands on a washed mint (0.076) instead of teal
+  (0.122). Measured both ways; the polar blend costs ~31 µs per render, i.e. nothing.
+- Painting one element per colour region instead was tried and rejected: 16 zone paths with
+  horizontal gradients (plus 27 per-band washes) looked the same or worse — one tint per piece puts
+  a colour edge at every piece boundary, and a single neutral overlay for the fade reads as frosted
+  glass because it cannot match the backdrop the layout paints — and it measured no cheaper. In this
+  build the cost tracks gradient brushes and draw calls, not element count: fewer, larger
+  gradient-filled paths lost to more, smaller solid-coloured ones.
+- The fill's box starts at the loudest band, so the gradient is at full strength at the curve and
+  gone at the baseline. `Background.stop` percentages are not honoured in this build — they render
+  flat — which is why this is a plain from→to gradient inside a box that begins at the peak.
+- Each band keeps the theme colour of the frequency range it stands for, read off the same log
+  scale as the bands (40 Hz–16 kHz): sub-bass below 60 Hz, bass to 250, vocal to 2 kHz, treble
+  above. `BAND_STOPS` in `ui.js` holds the four stops and their theme colour names. A hairline sits
+  under each band so a sample's place stays readable while the curve moves.
 - Cover art is stored under a content-addressed name so a new track never shows a
   stale decoded image, and the previous cover is pruned.
-- The bars refresh about 8 times a second while a track plays, and not at all
-  while it is paused or the sidebar is folded below 160 px (there the row is
-  cover-only). GPUI eases each bar's height between those updates, so the motion
-  is smoother than the data rate: `LEVELS_MS` in `main.js` is the mod's read
-  interval and `LEVELS_EVERY_S` in `store.py` is the helper's publish interval,
-  ~10 times a second.
+- The curve refreshes about 8 times a second while a track plays, and not at all while it is
+  paused or the sidebar is folded below 160 px (there the row is cover-only). Motion is
+  data-driven: a painted path cannot be eased between values, so the update rate is the frame
+  rate. `LEVELS_MS` in `main.js` is the mod's read interval and `LEVELS_EVERY_S` in `store.py` is
+  the helper's publish interval, but the real ceiling is the capture block in `levels.py`
+  (`BLOCK / RATE` = 2048/44100 = 46 ms, so 21.5 Hz); the 8.6 Hz you see is `LEVELS_EVERY_S = 0.08`
+  dropping every second block. Identical bodies are not rewritten. Dots were laid out with a
+  gamma (`value` in `ui.js`) so the levels music reaches spend the band's whole height.

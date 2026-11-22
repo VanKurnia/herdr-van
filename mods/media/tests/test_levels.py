@@ -1,3 +1,4 @@
+import math
 import os
 import sys
 import unittest
@@ -48,6 +49,28 @@ class LevelTest(unittest.TestCase):
             value = levels.level(peak)
             self.assertGreaterEqual(value, 0.0)
             self.assertLessEqual(value, 1.0)
+
+
+class ReleaseTest(unittest.TestCase):
+    def test_fall_follows_the_clock_not_the_block(self):
+        # One time constant of release leaves 1/e of the gap, whatever the block rate is.
+        one_tau = levels.release([0.0], [1.0], levels.TAU_RELEASE)[0]
+        self.assertAlmostEqual(one_tau, 1 / math.e, places=3)
+        self.assertGreater(levels.release([0.0], [1.0], levels.TAU_RELEASE / 2)[0], one_tau)
+        self.assertLess(levels.release([0.0], [1.0], levels.TAU_RELEASE * 2)[0], one_tau)
+
+    def test_no_time_means_no_change(self):
+        self.assertEqual(levels.release([0.0, 1.0], [0.5, 0.2], 0), [0.5, 0.2])
+
+    def test_attack_reaches_the_new_value_at_once(self):
+        self.assertEqual(levels.release([0.9], [0.1], 0.046)[0], 0.9)
+
+    def test_never_overshoots(self):
+        for dt in (0.01, 0.046, 0.5, 5.0):
+            for fresh, prev in ((0.0, 1.0), (1.0, 0.0), (0.6, 0.6)):
+                value = levels.release([fresh], [prev], dt)[0]
+                self.assertGreaterEqual(value, min(fresh, prev) - 1e-9)
+                self.assertLessEqual(value, max(fresh, prev) + 1e-9)
 
 
 if __name__ == "__main__":

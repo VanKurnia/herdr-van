@@ -18,6 +18,7 @@ soundcard/numpy provide on this platform.
 
 import argparse
 import asyncio
+import atexit
 import os
 import sys
 import threading
@@ -30,11 +31,12 @@ from winrt.windows.media.control import (  # noqa: E402
     GlobalSystemMediaTransportControlsSessionManager as SessionManager,
 )
 from winrt.windows.storage.streams import Buffer, InputStreamOptions  # noqa: E402
-from levels import BAND_RANGES, BANDS, BLOCK, DECAY, LOUDNESS, RATE, level  # noqa: E402
+from levels import BAND_RANGES, BANDS, BLOCK, LOUDNESS, RATE, level, release  # noqa: E402
 from store import Writer  # noqa: E402
 
 POLL_S = 1.0
 CMD_POLL_S = 0.15  # how soon a transport click reaches the player
+LOCK_STALE_S = 15.0  # a lock older than this with no living owner may be taken over
 PLAYBACK = {
     0: "closed",
     1: "opened",
@@ -53,8 +55,10 @@ async def read_thumbnail(reference):
     if not size:
         return None
     buffer = Buffer(size)
-    await stream.read_async(buffer, size, InputStreamOptions.NONE)
-    return bytes(buffer)
+    filled = await stream.read_async(buffer, size, InputStreamOptions.NONE)
+    # The buffer is allocated at `size`, so a short read is padded with zeros: bound it by the
+    # length the stream reports, or a truncated PNG is hashed and cached as a cover.
+    return bytes(filled)[: filled.length]
 
 
 async def sample(writer, manager):
@@ -107,24 +111,37 @@ def audio_loop(writer):
 
     window = np.hanning(BLOCK).astype(np.float32)
     levels = [0.0] * BANDS
+    last = time.monotonic()
 
     while not writer.stopping():
         try:
             speaker = sc.default_speaker()
             mic = sc.get_microphone(id=str(speaker.name), include_loopback=True)
             with mic.recorder(samplerate=RATE, channels=1, blocksize=BLOCK) as rec:
+                resumed = False
                 while not writer.stopping():
+                    # Nothing to publish while the track is paused or nobody is drawing the bars:
+                    # the recorder stays open (a loopback nobody drains costs nothing), so a resume
+                    # or a widened sidebar costs no device setup.
+                    if not (writer.playing and writer.wanted()):
+                        levels = [0.0] * BANDS  # drop the fall, so a resume starts clean
+                        writer.publish_levels(levels)  # deduped: a silent body writes nothing
+                        resumed = True
+                        time.sleep(0.05)  # still notices a resume within a frame
+                        continue
                     block = rec.record(numframes=BLOCK)
-                    if not writer.playing:
-                        levels = [0.0] * BANDS  # drop the decay, so a resume starts clean
-                        writer.publish_levels(levels)
+                    now = time.monotonic()
+                    dt, last = now - last, now
+                    if resumed:
+                        # A paused loopback buffer still holds pre-pause audio: drop it.
+                        resumed = False
                         continue
                     mono = block[:, 0] if block.ndim > 1 else block
                     if len(mono) < BLOCK:
                         continue  # a device can hand back a short first block
                     spec = np.abs(np.fft.rfft(mono * window))
                     fresh = [level(float(spec[a:b].max()) / LOUDNESS) for a, b in BAND_RANGES]
-                    levels = [max(f, p * DECAY) for f, p in zip(fresh, levels)]
+                    levels = release(fresh, levels, dt)
                     writer.publish_levels([round(v, 2) for v in levels])
         except Exception as exc:  # no device yet, or the output device changed
             print("audio failed: %r" % (exc,), file=sys.stderr, flush=True)
@@ -133,12 +150,14 @@ def audio_loop(writer):
 
 
 def watch_beat(writer):
-    """Exit when the window stops beating.
+    """The process's own heartbeat, and the door out when the window stops beating.
 
-    The poll loop below stops itself too, but a media call that never returns
-    never reaches that check; this thread keeps beating regardless.
+    `tick` is written here, not beside the media sample, so it proves the *process* is alive: a
+    player call that never returns would otherwise stop the tick while this thread kept the process
+    up, freezing the row and making the mod relaunch a helper that was still running.
     """
     while not writer.stopping():
+        writer.tick()
         time.sleep(POLL_S)
     os._exit(0)
 
@@ -177,16 +196,65 @@ async def poll(writer, manager):
     while not writer.stopping():
         try:
             await sample(writer, manager)
-            writer.tick()
         except Exception as exc:  # a player can vanish mid-call; keep the last good state
             print("sample failed: %r" % (exc,), file=sys.stderr, flush=True)
         await asyncio.sleep(POLL_S)
 
 
+def acquire_lock(home):
+    """One helper per app home, held for the whole life of the process.
+
+    The lock file is created exclusively and its handle is kept open, so a
+    second helper for the same home cannot take it while this process lives: on
+    Windows an open handle also refuses deletion, which is how a live owner is
+    told from a lock a dead process left behind. A stale lock with no owner is
+    taken over after LOCK_STALE_S.
+    """
+    path = os.path.join(home, "data", "media", "helper.lock")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    # O_TEMPORARY makes the OS delete the file when the handle closes, which a crash does too, so a
+    # lock can never be left behind and there is no window between closing and unlinking for a
+    # competitor to take it. Closing first and unlinking after left that window open.
+    flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_TEMPORARY", 0)
+    temporary = bool(getattr(os, "O_TEMPORARY", 0))
+
+    def release(fd):
+        os.close(fd)
+        if temporary:
+            return  # the OS removed it with the handle
+        try:
+            os.unlink(path)
+        except OSError:
+            pass  # already gone: a takeover removed it
+
+    def take():
+        try:
+            fd = os.open(path, flags)
+        except FileExistsError:
+            return False
+        os.write(fd, str(os.getpid()).encode("ascii"))
+        atexit.register(release, fd)
+        return True
+
+    if take():
+        return True
+    try:
+        if time.time() - os.path.getmtime(path) <= LOCK_STALE_S:
+            return False  # a live owner
+        os.unlink(path)
+    except OSError:
+        return False  # the owner still holds its handle, so the file cannot be removed
+    return take()
+
+
 async def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--home", required=True)
-    writer = Writer(parser.parse_args().home)
+    home = parser.parse_args().home
+    if not acquire_lock(home):
+        print("already running", file=sys.stderr, flush=True)
+        sys.exit(3)  # another helper owns this home; the supervisor reads its pid from the lock
+    writer = Writer(home)
     manager = await SessionManager.request_async()
     threading.Thread(target=audio_loop, args=(writer,), daemon=True).start()
     threading.Thread(target=watch_beat, args=(writer,), daemon=True).start()

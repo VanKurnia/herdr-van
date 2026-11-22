@@ -7,8 +7,9 @@ import time
 
 BEAT_STALE_S = 90.0  # the mod beats every 10 s
 PROTOCOL_V = 1  # state.json's shape; bump when a field is renamed or removed
-LEVELS_EVERY_S = 0.1  # the spectrum, published ~10 times a second
+LEVELS_EVERY_S = 0.08  # the spectrum, published at the rate the row reads it
 COMMANDS = {"prev", "toggle", "next"}
+REPLACE_TRIES = 5  # a rename can lose to a reader on Windows; 4 waits of 20 ms ride it out
 
 
 class Writer:
@@ -24,6 +25,8 @@ class Writer:
         self.levels = None
         self.levels_at = 0.0
         self.playing = False
+        self._beat = None  # (mtime, size) of the beat the cached answer was read from
+        self._wanted = True  # whether the mod is drawing the bars
         self.cover = None  # last cover path published for this track
         self.cover_key = None  # the track that path belongs to
 
@@ -34,6 +37,29 @@ class Writer:
         except OSError:
             return False  # the mod has not written one yet
         return age > BEAT_STALE_S
+
+    def wanted(self):
+        """Whether the mod is drawing the bars, from the beat's second field.
+
+        A beat with no second field means yes, as does one that is not there yet: the mod writes
+        its width on a timer, and an old mod cannot say otherwise. The answer is cached against the
+        file's own identity, because the audio loop asks once per block and opening a file costs ten
+        times what stating one does.
+        """
+        try:
+            info = os.stat(self.beat_path)
+        except OSError:
+            return True
+        key = (info.st_mtime_ns, info.st_size)
+        if key != self._beat:
+            try:
+                with open(self.beat_path, encoding="utf-8") as fh:
+                    fields = fh.read().split()
+            except OSError:
+                return True
+            self._beat = key
+            self._wanted = len(fields) < 2 or fields[1] != "0"
+        return self._wanted
 
     def _command(self):
         """The click in `cmd`, as (stamp, action); (0, None) when there is nothing to read."""
@@ -57,11 +83,23 @@ class Writer:
         return action
 
     def _atomic(self, name, body):
-        """Write text through a temp file, so the mod never reads a partial body."""
+        """Write text through a temp file, so the mod never reads a partial body.
+
+        The rename can lose a race with the mod reading the old file, which Windows reports as a
+        sharing violation. A few retries ride that out: an exception here would kill the thread
+        that keeps this file fresh, and nothing else would ever rewrite it.
+        """
         path = os.path.join(self.dir, name)
         with open(path + ".tmp", "w", encoding="utf-8") as fh:
             fh.write(body)
-        os.replace(path + ".tmp", path)
+        for attempt in range(REPLACE_TRIES):
+            try:
+                os.replace(path + ".tmp", path)
+                return
+            except PermissionError:
+                if attempt == REPLACE_TRIES - 1:
+                    raise
+                time.sleep(0.02)
 
     def tick(self):
         """Proof of life for the mod: an unchanged track writes nothing else."""

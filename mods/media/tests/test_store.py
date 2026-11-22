@@ -5,6 +5,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -48,6 +49,26 @@ class StoreTest(unittest.TestCase):
         self.writer.publish_levels([0.2] * levels.BANDS)
         self.assertEqual(json.loads(self.read("levels.json"))["l"], [0.2] * levels.BANDS)
 
+    def test_publish_levels_writes_once_per_window(self):
+        self.writer.publish_levels([0.1] * levels.BANDS)
+        path = os.path.join(self.dir, "levels.json")
+        before = os.stat(path).st_mtime_ns
+        for v in (0.2, 0.3, 0.4, 0.5):
+            time.sleep(0.005)
+            self.writer.publish_levels([v] * levels.BANDS)
+        self.assertEqual(os.stat(path).st_mtime_ns, before)
+        time.sleep(store.LEVELS_EVERY_S + 0.05)
+        self.writer.publish_levels([0.6] * levels.BANDS)
+        self.assertEqual(json.loads(self.read("levels.json"))["l"], [0.6] * levels.BANDS)
+
+    def test_publish_levels_skips_identical_body_after_window(self):
+        self.writer.publish_levels([0.1] * levels.BANDS)
+        path = os.path.join(self.dir, "levels.json")
+        time.sleep(store.LEVELS_EVERY_S + 0.05)
+        before = os.stat(path).st_mtime_ns
+        self.writer.publish_levels([0.1] * levels.BANDS)
+        self.assertEqual(os.stat(path).st_mtime_ns, before)
+
     def test_save_cover_is_content_addressed_and_prunes(self):
         first = b"\x89PNG-first"
         path = self.writer.save_cover(first)
@@ -62,6 +83,51 @@ class StoreTest(unittest.TestCase):
 
     def test_save_cover_none(self):
         self.assertIsNone(self.writer.save_cover(None))
+
+    def test_a_lost_rename_is_retried(self):
+        # The mod reading `tick` while it is replaced is a sharing violation on Windows. Losing the
+        # write is not fatal, but letting the exception escape kills the thread that publishes it.
+        real = store.os.replace
+        calls = []
+
+        def flaky(src, dst):
+            calls.append(dst)
+            if len(calls) == 1:
+                raise PermissionError("sharing violation")
+            real(src, dst)
+
+        with mock.patch.object(store.os, "replace", flaky):
+            self.writer.tick()
+        self.assertEqual(len(calls), 2)
+        self.assertTrue(self.read("tick"))
+
+    def beat(self, body):
+        with open(os.path.join(self.dir, "beat"), "w", encoding="utf-8") as fh:
+            fh.write(body)
+
+    def test_wanted_follows_the_beats_flag(self):
+        self.beat("1700000000 1")
+        self.assertTrue(self.writer.wanted())
+        self.beat("1700000000 0")
+        self.assertFalse(self.writer.wanted())
+        self.beat("1700000000 1")
+        self.assertTrue(self.writer.wanted())
+
+    def test_wanted_defaults_to_yes(self):
+        # No beat yet (the mod is starting), or a beat from an older mod with no second field.
+        self.assertTrue(self.writer.wanted())
+        self.beat("1700000000")
+        self.assertTrue(self.writer.wanted())
+
+    def test_wanted_is_cached_until_the_beat_changes(self):
+        self.beat("1700000000 0")
+        self.assertFalse(self.writer.wanted())
+        path = os.path.join(self.dir, "beat")
+        stamp = os.stat(path).st_mtime_ns
+        os.utime(path, ns=(stamp, stamp))  # same mtime and size: the cached answer stands
+        self.assertFalse(self.writer.wanted())
+        self.beat("1700000001 1")
+        self.assertTrue(self.writer.wanted())
 
     def test_stopping_reads_the_beats_age(self):
         self.assertFalse(self.writer.stopping())

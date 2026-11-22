@@ -12,7 +12,7 @@ $helper = Join-Path $ModDir 'helper.py'
 
 # One helper per app home: it outlives a window that closed without stopping it.
 $running = Get-CimInstance Win32_Process -Filter "Name='pythonw.exe' OR Name='python.exe'" -ErrorAction SilentlyContinue |
-  Where-Object { $_.CommandLine -like '*helper.py*' -and $_.CommandLine -like '*--home*' } |
+  Where-Object { $_.CommandLine -like '*helper.py*' -and $_.CommandLine -like '*--home*' -and $_.CommandLine -like "*$AppHome*" } |
   Select-Object -First 1
 if ($running) {
   $running.ProcessId
@@ -42,4 +42,14 @@ if ($probe) {
   }
 }
 
-(Start-Process -FilePath $python -ArgumentList @("`"$helper`"", '--home', "`"$AppHome`"") -WindowStyle Hidden -PassThru).Id
+$spawned = Start-Process -FilePath $python -ArgumentList @("`"$helper`"", '--home', "`"$AppHome`"") -WindowStyle Hidden -PassThru
+# The lock names the owner of this home, so a launcher that lost a race reports the winner
+# rather than the pid of the helper that is about to exit.
+$lock = Join-Path $AppHome 'data\media\helper.lock'
+$owner = $null
+for ($i = 0; $i -lt 20 -and -not $owner; $i++) {
+  $owner = "$(Get-Content $lock -Raw -ErrorAction SilentlyContinue)".Trim()
+  if (-not $owner) { Start-Sleep -Milliseconds 100 }
+}
+if ($owner -match '^\d+$' -and [int]$owner -ne $spawned.Id) { $owner; exit 0 }
+$spawned.Id

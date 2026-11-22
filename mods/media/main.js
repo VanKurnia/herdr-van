@@ -14,21 +14,29 @@
 // helper.js, the row's pixels are ui.js.
 
 import { View } from "gpui-kit";
-import { checking, layout, props, theme } from "herdr";
+import { appHome, checking, layout, props, theme, watchFolder } from "herdr";
 import { readText, writeFile } from "./state.js";
 import { backoffMs, startHelper, stopHelper } from "./helper.js";
 import { row } from "./ui.js";
 
 const COMPACT_PX = 160; // below this the row is cover-only: no text, no bars
-const READ_MS = 1000;
-const LEVELS_MS = 120;
+const LEVELS_MS = 80;
 const BEAT_MS = 10000;
 const TICK_STALE_S = 15; // the helper ticks every second
+const LAUNCH_GRACE_MS = 10000; // a fresh helper needs a few seconds to import winrt and tick
+const STALE_RETRIES = 2; // relaunches before a helper that is up but wedged is reported
 const OFFLINE_AFTER = 2; // failed launches before the row says why it is empty
 const PROTOCOL_V = 1; // the state.json shape this mod reads; mirrors store.py's PROTOCOL_V
+// state.json and a new cover are the only payloads worth re-reading: the watch
+// batches everything in the folder, including tick, beat, cmd and helper.lock.
+const STATE_FILES = /^(state\.json|cover-[0-9a-f]+\.png)$/;
 
 // What launch.ps1 answers when it cannot start the helper. Anything else is a real error to quote.
-const REASON = { "no-python": "python is not installed", "no-deps": "module deps missing" };
+const REASON = {
+  "no-python": "python is not installed",
+  "no-deps": "module deps missing",
+  "helper not responding": "helper not responding",
+};
 const PIP =
   'python -m pip install --target "%USERPROFILE%\\.config\\herdr-app\\mods\\media\\vendor" winrt-runtime winrt-Windows.Media.Control winrt-Windows.Storage.Streams winrt-Windows.Foundation winrt-Windows.Storage soundcard numpy';
 
@@ -60,20 +68,38 @@ export default class Media extends View {
     this.width = 268;
     this.pid = null;
     this.expected = { beat: null, cmd: null }; // last body written for each file the mod owns
+    this.writing = {}; // one write in flight per file: two clicks must not race on one expectation
+    this.staleRetries = 0; // launches since the helper last proved it was alive
+    this.staleReported = false; // the current stale episode has been explained
     this.launchedAt = 0;
     this.launchFailures = 0;
-    this.why = null; // the launcher's answer when it could not start the helper
+    this.why = null; // why the helper is not answering: a launcher reason, or no answer at all
     this.parked = false;
     if (checking()) return;
     this.parked = this.hidden();
     if (!this.parked) this.spawnHelper(cx);
-    cx.timer.every(READ_MS, (cx) => this.read(cx));
+    this.read(cx); // a reload starts on an empty payload; a settled track writes nothing
     cx.timer.every(5000, (cx) => this.alive(cx));
     cx.timer.every(LEVELS_MS, (cx) => this.readLevels(cx));
     cx.timer.every(BEAT_MS, (cx) => this.beat(cx));
-    // A silent passage stops the bars, and with them the redraws the clock rides on.
-    cx.timer.every(READ_MS, (cx) => {
+    // Parking follows the layout, and a hidden copy keeps its timers: this tick is what
+    // starts the helper again once the row is shown. A playing track also needs a redraw a
+    // second for the clock, which no file event provides.
+    cx.timer.every(1000, (cx) => {
+      this.syncParked(cx);
       if (this.state?.playing && this.state?.dur > 0) cx.notify();
+    });
+    // state.json and a new cover are the only reasons to re-read the payload: levels.json,
+    // tick, beat, cmd and helper.lock arrive in the same batches. Watch paths are absolute
+    // with a `\\?\` prefix, so compare basenames only.
+    cx.spawn(async (cx) => {
+      const dir = `${appHome()}/data/media`;
+      const base = (p) => p.split(/[\\/]/).pop();
+      for (;;) {
+        const changed = await watchFolder(dir);
+        if (this.parked) continue; // parked: the watch still runs, nothing is read
+        if (changed.some((p) => STATE_FILES.test(base(p)))) this.read(cx);
+      }
     });
   }
 
@@ -95,14 +121,17 @@ export default class Media extends View {
       } else {
         this.launchedAt = 0; // this was a deliberate stop, not a failed launch
         this.spawnHelper(cx);
+        this.read(cx); // nothing changed on disk while parked, so no watch event will
       }
     }
   }
 
   // The two files the mod owns: a heartbeat, and the transport clicks. writeTextFile needs the body
-  // it expects to find, so each file is adopted first and dropped when a write loses that race.
+  // it expects to find, so each file is adopted first and dropped when a write loses that race, and
+  // writes to one file are serialised: two clicks inside one round-trip would otherwise both read
+  // the same expectation, and the loser's click would vanish.
   writeOwned(name, body, cx) {
-    cx.spawn(async () => {
+    const run = async () => {
       if (this.expected[name] === null) this.expected[name] = await readText(name);
       try {
         await writeFile(name, body, this.expected[name]);
@@ -110,12 +139,22 @@ export default class Media extends View {
       } catch {
         this.expected[name] = null;
       }
-    });
+    };
+    const queued = (this.writing[name] ?? Promise.resolve()).then(run);
+    this.writing[name] = queued;
+    cx.spawn(() => queued);
+  }
+
+  // The bars, and with them the capture, are only worth paying for while the row is wide enough to
+  // draw them, so the beat carries that answer and the helper stops draining the loopback for a
+  // panel nobody can see.
+  wantsBars() {
+    return !this.parked && this.width >= COMPACT_PX;
   }
 
   beat(cx) {
     if (this.parked) return;
-    this.writeOwned("beat", String(Math.floor(Date.now() / 1000)), cx);
+    this.writeOwned("beat", `${Math.floor(Date.now() / 1000)} ${this.wantsBars() ? 1 : 0}`, cx);
   }
 
   // A click goes to the helper, the only process that can talk to the player: it applies the click
@@ -126,25 +165,28 @@ export default class Media extends View {
   }
 
   spawnHelper(cx) {
-    if (Date.now() - this.launchedAt < backoffMs(this.launchFailures)) return;
+    if (Date.now() - this.launchedAt < backoffMs(this.launchFailures)) return false;
     this.launchedAt = Date.now();
     this.beat(cx); // freshen the beat first: a stale one makes the helper exit at once
     cx.spawn(async (cx) => {
       const { pid, why } = await startHelper();
-      this.why = pid === null ? why : null; // kept for the row: "no-python", "no-deps", or an error
       if (pid === null) {
+        this.why = why; // kept for the row: "no-python", "no-deps", or a launcher's error
         this.launchFailures += 1;
         console.log("media: helper did not start:", why);
       } else {
         this.pid = pid;
         this.launchFailures = 0; // a launch that worked clears the offline row and the backoff
+        // A launcher's reason is history once it starts, but a wedged helper's verdict is not:
+        // this launch may have found that same wedged process still running.
+        if (this.why !== "helper not responding") this.why = null;
       }
       cx.notify(); // the row says why it is empty, so it follows either outcome
     });
+    return true;
   }
 
   read(cx) {
-    this.syncParked(cx);
     if (this.parked) return;
     cx.spawn(async (cx) => {
       const body = await readText("state.json");
@@ -161,13 +203,39 @@ export default class Media extends View {
   }
 
   // The tick only has to prove the helper is alive inside TICK_STALE_S, so it gets a timer of its
-  // own instead of riding along with every state read.
+  // own instead of riding along with every state read. A helper that stays stale through
+  // STALE_RETRIES launches is up but wedged on a player call: worth saying once, but the launches
+  // continue at the backoff's pace, because missing dependencies can arrive after the panel did.
   alive(cx) {
     if (this.parked) return;
     cx.spawn(async (cx) => {
       const tick = await readText("tick");
-      // The one thing a timer must act on: a helper that is gone.
-      if (Math.floor(Date.now() / 1000) - Number(tick) > TICK_STALE_S) this.spawnHelper(cx);
+      if (Math.floor(Date.now() / 1000) - Number(tick) <= TICK_STALE_S) {
+        // It answered: the episode is over, and a verdict from it is history. A launcher's own
+        // reason stays until the next launch replaces it.
+        this.staleRetries = 0;
+        this.staleReported = false;
+        if (this.why === "helper not responding") this.why = null;
+        return;
+      }
+      // A helper launched a moment ago is still importing winrt and has not ticked yet. Only
+      // launches that actually happened count, so a suppressed launch cannot burn the retries.
+      if (Date.now() - this.launchedAt < LAUNCH_GRACE_MS) return;
+      if (this.staleRetries < STALE_RETRIES) {
+        if (this.spawnHelper(cx)) this.staleRetries += 1;
+        return;
+      }
+      // A process that stopped ticking while it lives is either wedged on a player call or
+      // running with its heartbeat thread gone. Either way it still holds the home's lock, so a
+      // replacement cannot start until it is killed: relaunching finds it and reports its pid.
+      if (!this.staleReported) {
+        this.staleReported = true;
+        if (this.launchFailures === 0) this.why = "helper not responding";
+        cx.notify();
+        await stopHelper(this.pid);
+        this.pid = null;
+      }
+      this.spawnHelper(cx);
     });
   }
 
@@ -192,7 +260,7 @@ export default class Media extends View {
     const t = theme();
     const session = Boolean(this.state?.session);
     const playing = Boolean(this.state?.playing);
-    const offline = this.launchFailures >= OFFLINE_AFTER;
+    const offline = this.launchFailures >= OFFLINE_AFTER || this.staleRetries >= STALE_RETRIES;
     // A helper that predates this field (or a future one) keeps running until it exits: it is a
     // separate process, so the on-disk code can be newer than the payload being served.
     const stale = Boolean(this.state) && this.state.v !== PROTOCOL_V;
@@ -234,7 +302,11 @@ export default class Media extends View {
       onNext: (cx) => this.send("next", cx),
       onWidth: (size, cx) => {
         if (Math.round(size.width) === Math.round(this.width)) return;
+        const before = this.wantsBars();
         this.width = size.width;
+        // A width change is the only moment the answer can flip, so the beat goes out at once
+        // rather than up to a beat late.
+        if (this.wantsBars() !== before) this.beat(cx);
         cx.notify();
       },
     });

@@ -63,7 +63,7 @@
           "type": "block",
           "content": { "mod": "media", "props": { "block": "media" } },
           "size": {
-            "px": 80
+            "px": 92
           }
         },
         {
