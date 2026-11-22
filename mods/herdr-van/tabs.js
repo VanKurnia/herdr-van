@@ -15,35 +15,88 @@ const sessionsFor = (cwd) => `${home()}/.pi/agent/sessions/--${cwd.replace(/[:\\
 // Resolve after a wait without a polling clock of our own.
 const park = (cx, ms) => new Promise((done) => cx.timer.after(ms, done));
 
-// One wave, drawn rather than stacked: a Catmull-Rom curve through the rates, emitted as cubic
-// Bézier segments in percentages of the box, so the renderer anti-aliases a line instead of
-// stair-stepping a column of rectangles. The body under it is the same curve closed along the
-// baseline, for a gradient that fades to nothing at the bottom.
-const waveShape = (values) => {
-  const n = values.length;
-  const peak = Math.max(1, ...values);
-  const x = (i) => (i / (n - 1)) * 100;
-  const y = (i) => 97 - (values[i] / peak) * 94; // the stroke is centred on the curve: half of it
-  // falls outside the box at 0 % or 100 %, so the curve keeps a stroke's width off both edges.
-  const at = (i) => Math.max(0, Math.min(n - 1, i));
-  const curve = (builder) => {
-    let out = builder;
-    for (let i = 0; i < n - 1; i++) {
-      const a = at(i - 1), c = at(i), d = at(i + 1), e = at(i + 2);
-      out = out.cubic_bezier_to(
-        `${x(d)}%`, `${y(d)}%`,
-        `${x(c) + (x(d) - x(a)) / 6}%`, `${y(c) + (y(d) - y(a)) / 6}%`,
-        `${x(d) - (x(e) - x(c)) / 6}%`, `${y(d) - (y(e) - y(c)) / 6}%`,
-      );
+// One wave, drawn rather than stacked: a monotone cubic through the rates, emitted as cubic Bézier
+// segments in percentages of the box, so the renderer anti-aliases a line instead of stair-stepping
+// a column of rectangles. Monotone (Fritsch-Carlson) and not Catmull-Rom: a spline that overshoots
+// draws a peak between two samples that never happened, and a dip below the floor, which the data
+// cannot produce. A silence longer than GAP_MS breaks the line rather than drawing a slope over it.
+const GAP_MS = 5 * 60 * 1000; // a longer silence is a break, not a segment
+const FLOOR = 60; // tok/s the box always spans, so a quiet stretch does not fill it
+const SETTLE_MS = 600; // writes arrive in bursts, and a burst is one message
+
+// A step rather than the sample's own maximum: the box keeps its scale while a message arrives, so
+// two moments in the same session can be compared by eye.
+const scaleFor = (values) => Math.max(FLOOR, Math.ceil((Math.max(...values) * 1.1) / 20) * 20);
+
+// Fritsch-Carlson tangents, clamped so no segment leaves the interval between its own endpoints.
+const tangents = (v) => {
+  const n = v.length;
+  if (n < 2) return v.map(() => 0);
+  const d = [];
+  for (let i = 0; i < n - 1; i++) d.push(v[i + 1] - v[i]);
+  const m = [d[0]];
+  for (let i = 1; i < n - 1; i++) m.push(d[i - 1] * d[i] <= 0 ? 0 : (d[i - 1] + d[i]) / 2);
+  m.push(d[n - 2]);
+  for (let i = 0; i < n - 1; i++) {
+    if (d[i] === 0) {
+      m[i] = 0;
+      m[i + 1] = 0;
+      continue;
     }
-    return out;
-  };
-  return {
-    line: curve(PathBuilder.stroke(2).move_to(`${x(0)}%`, `${y(0)}%`)).build(),
-    // The body runs to the box's floor, so the fade has the whole height to work over.
-    body: curve(PathBuilder.fill().move_to(`${x(0)}%`, `${y(0)}%`))
-      .line_to("100%", "100%").line_to("0%", "100%").close().build(),
-  };
+    const a = m[i] / d[i], b = m[i + 1] / d[i], s = a * a + b * b;
+    if (s > 9) {
+      const k = 3 / Math.sqrt(s);
+      m[i] = k * a * d[i];
+      m[i + 1] = k * b * d[i];
+    }
+  }
+  return m;
+};
+
+const waveShape = (values, times, peak) => {
+  const n = values.length;
+  const x = (i) => (i / (n - 1)) * 100;
+  // The stroke is centred on the curve: half of it falls outside the box at 0 % or 100 %, so the
+  // curve keeps a stroke's width off both edges.
+  const y = (v) => 97 - (v / peak) * 94;
+  // Runs of samples close enough in time to join. A sample between two silences stays a point.
+  const runs = [];
+  let run = [0];
+  for (let i = 1; i < n; i++) {
+    if (times[i] - times[i - 1] > GAP_MS) {
+      runs.push(run);
+      run = [];
+    }
+    run.push(i);
+  }
+  runs.push(run);
+  let line = PathBuilder.stroke(2);
+  let body = PathBuilder.fill();
+  for (const r of runs) {
+    const v = r.map((i) => values[i]);
+    const xs = r.map(x);
+    // Tangents from this run's own samples: what lies across a gap is drawn nowhere, so it must not
+    // shape the edge of what is drawn.
+    const m = tangents(v);
+    const step = (b, k) => {
+      const a = xs[k], d = xs[k + 1];
+      return b.cubic_bezier_to(
+        `${d}%`, `${y(v[k + 1])}%`,
+        `${(a + (d - a) / 3).toFixed(3)}%`, `${y(v[k] + m[k] / 3)}%`,
+        `${(d - (d - a) / 3).toFixed(3)}%`, `${y(v[k + 1] - m[k + 1] / 3)}%`,
+      );
+    };
+    line = line.move_to(`${xs[0]}%`, `${y(v[0])}%`);
+    body = body.move_to(`${xs[0]}%`, `${y(v[0])}%`);
+    for (let k = 1; k < r.length; k++) {
+      line = step(line, k - 1);
+      body = step(body, k - 1);
+    }
+    // The body runs to the box's floor, so the fade has the whole height to work over. One shape per
+    // run: a gap closes on the baseline instead of being bridged by a fill that implies data.
+    body = body.line_to(`${xs[xs.length - 1]}%`, "100%").line_to(`${xs[0]}%`, "100%").close();
+  }
+  return { line: line.build(), body: body.build(), peak, top: Math.max(...values) };
 };
 
 export default class Tabs {
@@ -54,9 +107,12 @@ export default class Tabs {
     // it last stepped (ms). Shared by every event of one flick.
     this.swipe = { acc: 0, steps: 0, at: 0, last: 0 };
     // Tokens per second, one per finished message of the focused agent's own pi session, oldest
-    // first, and the running ease from the previous list to it (null between samples).
+    // first, with each sample's own time so a silence can be drawn as one. The scale only grows
+    // within a session: a peak that fell when one message left the window would re-scale every
+    // point the eye is following.
     this.speed = [];
-    this.fade = null;
+    this.time = [];
+    this.peak = 0;
     // Follow the agent that has the keyboard, and only pi: its session log gains an entry per
     // message, so a watch brings each new rate; the slow beat is for telling one agent from another
     // — a watch cannot say that the person switched, so without it the old rates would sit there.
@@ -65,20 +121,18 @@ export default class Tabs {
       for (;;) {
         const agent = agents().find((a) => a.focused) ?? null;
         const cwd = agent ? focused()?.cwd ?? null : null;
-        // Another agent in the same folder (opencode beside pi, say) has no log here, and pi's last
-        // run is not its rate: the wave is pi's or it is nothing.
-        const follows = Boolean(agent && cwd) && (/pi/i.test(agent.app ?? "") || agent.program?.name === "Pi");
+        // The wave is pi's or it is nothing: another agent in the same folder (opencode beside pi,
+        // say) has no log here, and pi's last run is not its rate.
+        const follows = Boolean(agent && cwd) && agent.program?.name === "Pi";
         const next = follows ? `${agent.address}|${cwd}` : null;
         if (next !== key) {
           key = next;
-          try {
-            watch?.cancel();
-          } catch {
-            // a watch that already answered cannot be cancelled again
-          }
+          // Safe after settlement, so a watch that already answered needs no guard.
+          watch?.cancel();
           watch = null;
           this.speed = [];
-          this.fade = null; // a new session's curve is not a blend of the old one's
+          this.time = [];
+          this.peak = 0;
           fresh = true;
           cx.notify();
         }
@@ -87,10 +141,7 @@ export default class Tabs {
           continue;
         }
         const dir = sessionsFor(cwd);
-        if (fresh) {
-          fresh = false;
-          await this.tail(dir, cx);
-        }
+        // Armed before the read, so a write that lands while speedtail runs is still seen.
         if (!watch) {
           try {
             watch = watchFolder(dir);
@@ -98,71 +149,41 @@ export default class Tabs {
             watch = null; // no session in this folder yet: the beat retries
           }
         }
+        // A read that could not happen (no folder yet, no node) is retried on the next beat:
+        // nothing else would wake it, and the reason may be temporary.
+        if (fresh) fresh = !(await this.tail(dir, cx));
         const changed = watch
           ? await Promise.race([watch.then(() => true, () => true), park(cx, 1500).then(() => false)])
           : await park(cx, 1500).then(() => false);
         if (changed) {
           watch = null;
           fresh = true;
+          await park(cx, SETTLE_MS); // let the rest of the burst land before reading it
         }
       }
     });
   }
 
   // The last few finished messages as tokens per second, from pi's own numbers. Unchanged rates
-  // redraw nothing.
+  // redraw nothing, and whether it could read at all is the caller's to retry.
   async tail(dir, cx) {
-    let out;
-    try {
-      out = (await exec("node", [`${appHome()}/mods/herdr-van/speedtail.js`, `--dir=${dir}`, "--n=40"], { timeout: 8000 })).stdout;
-    } catch {
-      return;
-    }
     let rows;
     try {
-      rows = JSON.parse(out || "[]");
+      rows = JSON.parse((await exec("node", [`${appHome()}/mods/herdr-van/speedtail.js`, `--dir=${dir}`, "--n=40"], { timeout: 8000 })).stdout);
     } catch {
-      return;
+      return false; // no node, no session in this folder yet, or a body cut short
     }
     const next = rows.map((r) => Math.round(r[1] / (r[2] / 1000)));
-    if (next.join() === this.speed.join()) return;
-    // A new sample would snap every height and the peak at once. Keep what is on screen as the
-    // start of a short ease, so the curve slides into the new shape instead of jumping to it.
-    this.fade = { from: this.speed, t0: Date.now(), ms: 320 };
+    const times = rows.map((r) => r[0]);
+    this.peak = Math.max(this.peak, scaleFor(next));
+    const changed = next.join() !== this.speed.join() || times.join() !== this.time.join();
     this.speed = next;
-    this.wake(cx);
-  }
-
-  // Redraws for as long as an ease is running. Bounded: a few frames per sample, only when one
-  // arrives, and nothing at all while the curve sits still.
-  wake(cx) {
-    const step = (cx) => {
-      if (!this.fade) return;
-      cx.notify();
-      if (Date.now() - this.fade.t0 < this.fade.ms) cx.timer.after(33, step);
-      else this.fade = null;
-    };
-    cx.timer.after(33, step);
-  }
-
-  // The values to draw: the new ones, or a blend of the old and new while an ease runs. The two
-  // lists are lined up at their newest sample, since that end is "now" for both; an older, shorter
-  // list holds its first value across the columns it does not reach.
-  shown() {
-    const f = this.fade;
-    if (!f) return this.speed;
-    const p = (Date.now() - f.t0) / f.ms;
-    if (p >= 1) {
-      this.fade = null;
-      return this.speed;
-    }
-    const ease = 1 - (1 - p) * (1 - p); // slows into place rather than stopping dead
-    const from = f.from, to = this.speed;
-    const n = Math.max(from.length, to.length);
-    const at = (list, i) => list.length
-      ? list[Math.max(0, Math.min(list.length - 1, i - (n - list.length)))]
-      : 0;
-    return Array.from({ length: n }, (_, i) => at(from, i) * (1 - ease) + at(to, i) * ease);
+    this.time = times;
+    if (!changed) return true;
+    // One repaint per sample: the curve is geometry, not a tween, and everything that moves here
+    // moves in the compositor.
+    cx.notify();
+    return true;
   }
 
   // One tab per wheel notch. A touchpad or a smooth-scrolling mouse sends many small events per
@@ -238,18 +259,20 @@ export default class Tabs {
     // ends: an overflow scroll area here would stretch its children to its own width, which fed a
     // wrong width back into whatever was measured from them. Overflowing tabs are clipped instead
     // (the bar hides its overflow) and the wheel still steps through them.
-    const rates = this.shown().slice(-30);
-    const shape = this.onBar || rates.length < 2 ? null : waveShape(rates);
+    const rates = this.speed.slice(-30);
+    // The wave is drawn only while the pointer is away from the bar, but its box stays: the tooltip
+    // hangs off it, and the numbers live there.
+    const shape = rates.length < 2 ? null : waveShape(rates, this.time.slice(-30), this.peak);
     // `window` here is the gpui window the mod draws into, not the app's window data (imported as
     // `window` from herdr above), so it is reached through globalThis.
     const paint = globalThis.window;
-    const fade = /^#[0-9a-fA-F]{6}$/.test(t.accent) ? `${t.accent}00` : "#00000000";
     const speed = shape
       ? div().id("tab-speed").relative().flex_1().min_w(0).h_full()
-        .tooltip(`Tokens per second, last ${rates.length} messages · peak ${Math.round(Math.max(...rates))}`)
-        .child(paint.paint_path(shape.body, Background.linear_gradient(180, `${t.accent}99`, fade))
-          .absolute().top(3).left(0).right(0).bottom(0))
-        .child(paint.paint_path(shape.line, t.accent).absolute().top(3).left(0).right(0).bottom(0))
+        .tooltip(`Tokens per second, last ${rates.length} messages · best ${Math.round(shape.top)}, scale ${shape.peak}`)
+        .when(!this.onBar, el => el
+          .child(paint.paint_path(shape.body, Background.linear_gradient(180, `${t.accent}99`, `${t.accent}00`))
+            .absolute().top(3).left(0).right(0).bottom(0))
+          .child(paint.paint_path(shape.line, t.accent).absolute().top(3).left(0).right(0).bottom(0)))
       : null;
     return h_flex().id("tab-bar").size_full().min_w(0).pl(lightsPadding).items_center().overflow_hidden()
       .on_hover((on, cx) => { if (on !== this.onBar) { this.onBar = on; cx.notify(); } })
