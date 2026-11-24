@@ -19,10 +19,18 @@ const park = (cx, ms) => new Promise((done) => cx.timer.after(ms, done));
 // segments in percentages of the box, so the renderer anti-aliases a line instead of stair-stepping
 // a column of rectangles. Monotone (Fritsch-Carlson) and not Catmull-Rom: a spline that overshoots
 // draws a peak between two samples that never happened, and a dip below the floor, which the data
-// cannot produce. A silence longer than GAP_MS breaks the line rather than drawing a slope over it.
-const GAP_MS = 5 * 60 * 1000; // a longer silence is a break, not a segment
+// cannot produce.
 const FLOOR = 60; // tok/s the box always spans, so a quiet stretch does not fill it
 const SETTLE_MS = 600; // writes arrive in bursts, and a burst is one message
+
+// The bar's span is time, not messages. A point per finished message meant the curve slid a slot
+// every few seconds during a turn, and three or four at once when a burst landed: too fast to read,
+// and it settled into a new shape rather than moving. One point per BUCKET_MS instead, SLOTS of
+// them, so the curve advances one slot every 15 s however the messages fall — 15 minutes across the
+// bar. One slot per tick is the smallest step this runtime allows: the curve is geometry, and a
+// per-frame redraw of the whole window is what animating it smoothly would cost.
+const SLOTS = 60;
+const BUCKET_MS = 15 * 1000;
 
 // A step rather than the sample's own maximum: the box keeps its scale while a message arrives, so
 // two moments in the same session can be compared by eye.
@@ -53,49 +61,37 @@ const tangents = (v) => {
   return m;
 };
 
-const waveShape = (values, times, peak) => {
+// Every point is one slice of the same width, so the curve is one unbroken line: a quiet slice is a
+// real zero, not a hole, and nothing has to be bridged or split.
+const waveShape = (values, peak) => {
   const n = values.length;
-  const x = (i) => (i / (n - 1)) * 100;
+  // A fixed slot width, anchored at the right edge: a new slice arrives at 100 % and every older one
+  // keeps its place, so the curve marches left one slot per slice. Fitting the points to the box
+  // instead re-spaced the whole line on every arrival, which early in a session swept the bar.
+  const slot = 100 / (SLOTS - 1);
+  const x = (i) => 100 - (n - 1 - i) * slot;
   // The stroke is centred on the curve: half of it falls outside the box at 0 % or 100 %, so the
   // curve keeps a stroke's width off both edges.
   const y = (v) => 97 - (v / peak) * 94;
-  // Runs of samples close enough in time to join. A sample between two silences stays a point.
-  const runs = [];
-  let run = [0];
-  for (let i = 1; i < n; i++) {
-    if (times[i] - times[i - 1] > GAP_MS) {
-      runs.push(run);
-      run = [];
-    }
-    run.push(i);
+  // Tangents from these samples, clamped so no segment leaves the interval between its own ends.
+  const m = tangents(values);
+  const xs = values.map((_, i) => x(i));
+  const step = (b, k) => {
+    const a = xs[k], d = xs[k + 1];
+    return b.cubic_bezier_to(
+      `${d}%`, `${y(values[k + 1])}%`,
+      `${(a + (d - a) / 3).toFixed(3)}%`, `${y(values[k] + m[k] / 3)}%`,
+      `${(d - (d - a) / 3).toFixed(3)}%`, `${y(values[k + 1] - m[k + 1] / 3)}%`,
+    );
+  };
+  let line = PathBuilder.stroke(2).move_to(`${xs[0]}%`, `${y(values[0])}%`);
+  let body = PathBuilder.fill().move_to(`${xs[0]}%`, `${y(values[0])}%`);
+  for (let k = 1; k < n; k++) {
+    line = step(line, k - 1);
+    body = step(body, k - 1);
   }
-  runs.push(run);
-  let line = PathBuilder.stroke(2);
-  let body = PathBuilder.fill();
-  for (const r of runs) {
-    const v = r.map((i) => values[i]);
-    const xs = r.map(x);
-    // Tangents from this run's own samples: what lies across a gap is drawn nowhere, so it must not
-    // shape the edge of what is drawn.
-    const m = tangents(v);
-    const step = (b, k) => {
-      const a = xs[k], d = xs[k + 1];
-      return b.cubic_bezier_to(
-        `${d}%`, `${y(v[k + 1])}%`,
-        `${(a + (d - a) / 3).toFixed(3)}%`, `${y(v[k] + m[k] / 3)}%`,
-        `${(d - (d - a) / 3).toFixed(3)}%`, `${y(v[k + 1] - m[k + 1] / 3)}%`,
-      );
-    };
-    line = line.move_to(`${xs[0]}%`, `${y(v[0])}%`);
-    body = body.move_to(`${xs[0]}%`, `${y(v[0])}%`);
-    for (let k = 1; k < r.length; k++) {
-      line = step(line, k - 1);
-      body = step(body, k - 1);
-    }
-    // The body runs to the box's floor, so the fade has the whole height to work over. One shape per
-    // run: a gap closes on the baseline instead of being bridged by a fill that implies data.
-    body = body.line_to(`${xs[xs.length - 1]}%`, "100%").line_to(`${xs[0]}%`, "100%").close();
-  }
+  // The body runs to the box's floor, so the fade has the whole height to work over.
+  body = body.line_to(`${xs[n - 1]}%`, "100%").line_to(`${xs[0]}%`, "100%").close();
   return { line: line.build(), body: body.build(), peak, top: Math.max(...values) };
 };
 
@@ -106,16 +102,22 @@ export default class Tabs {
     // A wheel gesture's progress: how far it has moved, how many tabs it already stepped, and when
     // it last stepped (ms). Shared by every event of one flick.
     this.swipe = { acc: 0, steps: 0, at: 0, last: 0 };
-    // Tokens per second, one per finished message of the focused agent's own pi session, oldest
-    // first, with each sample's own time so a silence can be drawn as one. The scale only grows
-    // within a session: a peak that fell when one message left the window would re-scale every
-    // point the eye is following.
+    // Tokens per second, one per slice of BUCKET_MS of the focused agent's own pi session, oldest
+    // first. `pending` holds the slices read but not yet shown: the display takes one per tick, so a
+    // burst is drawn a slice at a time instead of shoving the curve several slots at once. The scale
+    // only grows within a session: a peak that fell when one slice left the window would re-scale
+    // every point the eye is following.
     this.speed = [];
-    this.time = [];
+    this.pending = [];
+    this.seenKey = null; // the newest slice already queued
     this.peak = 0;
     // Follow the agent that has the keyboard, and only pi: its session log gains an entry per
     // message, so a watch brings each new rate; the slow beat is for telling one agent from another
     // — a watch cannot say that the person switched, so without it the old rates would sit there.
+    // The display's own clock. Driven by arrivals the window lurches; driven by a clock it slides a
+    // slice every BUCKET_MS, and a silence still advances, so a quiet agent leaves the bar behind
+    // rather than freezing it.
+    if (!checking()) cx.timer.every(BUCKET_MS, (cx) => this.slide(cx));
     if (!checking()) cx.spawn(async (cx) => {
       let key = null, watch = null, fresh = true;
       for (;;) {
@@ -131,8 +133,9 @@ export default class Tabs {
           watch?.cancel();
           watch = null;
           this.speed = [];
-          this.time = [];
+          this.pending = [];
           this.peak = 0;
+          this.seenKey = null;
           fresh = true;
           cx.notify();
         }
@@ -164,26 +167,54 @@ export default class Tabs {
     });
   }
 
-  // The last few finished messages as tokens per second, from pi's own numbers. Unchanged rates
-  // redraw nothing, and whether it could read at all is the caller's to retry.
+  // The last few minutes as tokens per second, in even slices of time rather than one point per
+  // finished message, from pi's own numbers. Unchanged rates redraw nothing, and whether it could
+  // read at all is the caller's to retry.
   async tail(dir, cx) {
     let rows;
     try {
-      rows = JSON.parse((await exec("node", [`${appHome()}/mods/herdr-van/speedtail.js`, `--dir=${dir}`, "--n=40"], { timeout: 8000 })).stdout);
+      rows = JSON.parse((await exec("node", [`${appHome()}/mods/herdr-van/speedtail.js`, `--dir=${dir}`, "--n=400"], { timeout: 8000 })).stdout);
     } catch {
       return false; // no node, no session in this folder yet, or a body cut short
     }
-    const next = rows.map((r) => Math.round(r[1] / (r[2] / 1000)));
-    const times = rows.map((r) => r[0]);
+    // A slice's rate is its own tokens over its own time, so a burst and a slow turn both read
+    // honestly. The slice keeps the time of its last message: that is what tells a silence apart from
+    // a busy stretch, and it lets the wave break across one as it always has.
+    const slices = new Map();
+    for (const [at, tokens, ms] of rows) {
+      const key = Math.floor(at / BUCKET_MS);
+      const slice = slices.get(key) ?? { tokens: 0, ms: 0, at };
+      slice.tokens += tokens;
+      slice.ms += ms;
+      slice.at = Math.max(slice.at, at);
+      slices.set(key, slice);
+    }
+    const keys = [...slices.keys()].sort((a, b) => a - b);
+    const fresh = this.seenKey === null ? keys.slice(-SLOTS) : keys.filter((k) => k > this.seenKey);
+    if (!fresh.length) return true;
+    this.seenKey = fresh[fresh.length - 1];
+    // A slice's rate is its own tokens over its own time, so a burst and a slow turn both read
+    // honestly. The scale grows with the busiest slice of this read, not with its sum.
+    const next = fresh.map((k) => { const s = slices.get(k); return Math.round(s.tokens / (s.ms / 1000)); });
     this.peak = Math.max(this.peak, scaleFor(next));
-    const changed = next.join() !== this.speed.join() || times.join() !== this.time.join();
-    this.speed = next;
-    this.time = times;
-    if (!changed) return true;
-    // One repaint per sample: the curve is geometry, not a tween, and everything that moves here
+    for (const rate of next) this.pending.push(rate);
+    return true;
+  }
+
+  // One slice per tick, from the queue; a silent slice when it is empty, so the window is time and
+  // not events. A new session takes as many as fit at once — filling the bar over 15 minutes would
+  // show an empty graph for the session it is meant to describe.
+  slide(cx) {
+    if (!this.speed.length && !this.pending.length) return; // nothing followed: nothing to draw
+    if (!this.speed.length) {
+      this.speed = this.pending.splice(0, SLOTS);
+    } else {
+      this.speed.push(this.pending.length ? this.pending.shift() : 0);
+      if (this.speed.length > SLOTS) this.speed.shift();
+    }
+    // One repaint per slice: the curve is geometry, not a tween, and everything that moves here
     // moves in the compositor.
     cx.notify();
-    return true;
   }
 
   // One tab per wheel notch. A touchpad or a smooth-scrolling mouse sends many small events per
@@ -259,10 +290,10 @@ export default class Tabs {
     // ends: an overflow scroll area here would stretch its children to its own width, which fed a
     // wrong width back into whatever was measured from them. Overflowing tabs are clipped instead
     // (the bar hides its overflow) and the wheel still steps through them.
-    const rates = this.speed.slice(-30);
+    const rates = this.speed;
     // The wave is drawn only while the pointer is away from the bar, but its box stays: the tooltip
     // hangs off it, and the numbers live there.
-    const shape = rates.length < 2 ? null : waveShape(rates, this.time.slice(-30), this.peak);
+    const shape = rates.length < 2 ? null : waveShape(rates, this.peak);
     // `window` here is the gpui window the mod draws into, not the app's window data (imported as
     // `window` from herdr above), so it is reached through globalThis.
     const paint = globalThis.window;
