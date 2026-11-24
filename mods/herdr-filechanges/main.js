@@ -64,8 +64,9 @@ function languageOf(path) {
 // Text draws a tab as nothing: pad each one out to the next 4-column stop.
 const untab = (text) => text.replace(/[^\t]*\t/g, (s) => s.slice(0, -1).padEnd((s.length - 1) - (s.length - 1) % 4 + 4));
 
-// An unwrapped row's height, which its elements and the virtual list that places them share.
-const ROW_H = 18;
+// An unwrapped row's height at the person's type size: 18 px at 11 px, the density this
+// panel has always had. Its elements and the virtual list that places them share it.
+const rowHeight = (size) => Math.ceil(size * (18 / 11));
 
 // Rows of a unified patch. Header noise (Index:, ===, ---, +++) is dropped — the File list
 // already names the file — and so is the marker character: the tint says what it said.
@@ -422,7 +423,7 @@ export default class HerdrFileChanges extends View {
       line_numbers: true,
       soft_wrap: this.wrap,
       font_family: settings().font_family ?? "JetBrains Mono",
-      font_size: 11,
+      font_size: settings().font_size,
       syntax: SYNTAX(theme()),
     });
     this.editorKey = key;
@@ -516,10 +517,11 @@ export default class HerdrFileChanges extends View {
   }
 
   // The tint carries the marker: what was added, what was removed, no `+`/`-` glyph.
-  diffRow(row, t) {
+  diffRow(row, t, size) {
     const wrap = this.wrap;
-    const line = (text) => div().flex_none().px(8).py(2).text_size(11).text_color(t.dim)
-      .when(wrap, (e) => e.whitespace_normal()).when(!wrap, (e) => e.h(ROW_H).truncate()).child(text);
+    const gutter = Math.ceil(4 * size * 0.6) + 4;
+    const line = (text) => div().flex_none().px(8).py(2).text_size(size).text_color(t.dim)
+      .when(wrap, (e) => e.whitespace_normal()).when(!wrap, (e) => e.h(rowHeight(size)).truncate()).child(text);
     if (row.kind === "@") return line(row.text).bg(t.raised);
     if (row.kind === "meta") return line(row.text);
     const tint = row.kind === "+" ? t.ansi2 + "18" : row.kind === "-" ? t.ansi1 + "18" : null;
@@ -528,10 +530,10 @@ export default class HerdrFileChanges extends View {
     // a box of its own. Wrapped, those boxes are words and the row's flex breaks between them;
     // unwrapped, they stay on one line and truncate.
     return h_flex().flex_none().px(6).gap(6).when(Boolean(tint), (e) => e.bg(tint))
-      .when(wrap, (e) => e.items_start().py(2)).when(!wrap, (e) => e.items_center().h(ROW_H))
-      .child(div().min_w(30).flex_none().text_right().text_size(10.5).text_color(t.dim)
+      .when(wrap, (e) => e.items_start().py(2)).when(!wrap, (e) => e.items_center().h(rowHeight(size)))
+      .child(div().min_w(gutter).flex_none().text_right().text_size(size - 0.5).text_color(t.dim)
         .child(row.number === undefined ? "" : String(row.number)))
-      .child(h_flex().flex_1().min_w(0).gap(0).text_size(11)
+      .child(h_flex().flex_1().min_w(0).gap(0).text_size(size)
         .when(wrap, (e) => e.flex_wrap()).when(!wrap, (e) => e.truncate())
         .children(row.boxes.map((box) =>
           div().flex_none().when(Boolean(syntax[box.cls]), (e) => e.text_color(syntax[box.cls])).child(box.text))));
@@ -560,7 +562,7 @@ export default class HerdrFileChanges extends View {
   render(cx) {
     this.watchHost(cx);
     if (piTerminal() !== this.address) this.sync(cx);
-    const t = theme();
+    const t = theme(), size = settings().font_size;
     const files = this.mergedFiles();
     const add = files.reduce((n, f) => n + f.added, 0);
     const rem = files.reduce((n, f) => n + f.removed, 0);
@@ -623,12 +625,12 @@ export default class HerdrFileChanges extends View {
         .text_color(t.dim).child(svg(icon("chevron-right")).size(11).flex_none()))))
       .when(this.codeShut, (e) => e.cursor_pointer().on_click((_e, cx) => { this.toggleCode(cx); }));
 
-    // Both modes build only what is on screen. Unwrapped rows are ROW_H tall, so a fixed-size list
-    // places them; wrapped rows are as tall as their text, so `list` measures each one.
+    // Both modes build only what is on screen. Unwrapped rows are rowHeight(size) tall, so a
+    // fixed-size list places them; wrapped rows are as tall as their text, so `list` measures each.
     const diffList = this.wrap
-      ? list("pi-diff", this.rows.length, (i) => String(i), (i) => this.diffRow(this.rows[i], t))
-      : v_virtual_list("pi-diff", this.rows.length, ROW_H, (i) => String(i),
-          (range) => this.rows.slice(range.start, range.end).map((row) => this.diffRow(row, t)));
+      ? list("pi-diff", this.rows.length, (i) => String(i), (i) => this.diffRow(this.rows[i], t, size))
+      : v_virtual_list("pi-diff", this.rows.length, rowHeight(size), (i) => String(i),
+          (range) => this.rows.slice(range.start, range.end).map((row) => this.diffRow(row, t, size)));
     const codeBody = div().flex_1().min_h(0)
       .when(this.mode === "diff" && this.rows.length > 0, (e) => e.child(
         div().size_full().min_h(0).relative()
