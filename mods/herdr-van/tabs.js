@@ -210,6 +210,13 @@ export default class Tabs {
   // same frame, so the band never jumps.
   glide(cx) {
     if (!this.speed.length && !this.pending.length) return; // nothing followed: nothing to draw
+    // A band scrolled down to the floor is a flat line: sliding it changes no pixel, so the clock stops
+    // instead of redrawing the window over an identical picture. Clearing slotAt restarts the clock in
+    // phase on the next slice rather than advancing a slot for every one that went by.
+    if (!this.pending.length && this.speed.every((v) => !v)) {
+      this.slotAt = 0;
+      return;
+    }
     const now = Date.now();
     if (!this.slotAt) this.slotAt = now;
     // A band with nothing drawn yet fills at once: filling it over a quarter of an hour would show an
