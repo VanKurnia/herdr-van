@@ -21,9 +21,9 @@ const SETTLE_MS = 600; // writes arrive in bursts; a burst is one message
 // The bar's span is time, not messages: a point per finished message slid a slot every few seconds
 // during a turn, several at once when a burst landed, and re-spaced the whole line on every arrival.
 // One point per BUCKET_MS instead, so the band advances one slot at a fixed rate however messages
-// fall — five minutes across the bar.
+// fall — a little over three minutes across the bar.
 const SLOTS = 60;
-const BUCKET_MS = 5 * 1000;
+const BUCKET_MS = 3333;
 // Drawn this many slices wider than the bar, to the right: new data is drawn where it cannot be seen
 // and drifts in, rather than appearing at the edge.
 const LEAD = 2;
