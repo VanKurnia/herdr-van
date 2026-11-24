@@ -15,6 +15,13 @@ import { listIcons, pickerHeight } from "./iconPicker.js";
 
 const where = (s, ps) => JSON.stringify([s.machine ?? null, place(s, ps)]);
 const base = (path) => path.replace(/\/+$/, "").split("/").pop();
+// The repo's name from its common git dir. `.bare` is a project that keeps a hidden bare
+// repo beside its worktrees: it names the project, not itself.
+const repoName = (common) => {
+  if (common.endsWith("/.git")) return base(common.slice(0, -5));
+  const own = base(common);
+  return own === ".bare" ? base(common.slice(0, -own.length - 1)) : own.replace(/\.git$/, "");
+};
 // A row's hover action: an 18×18 square that swallows the press, so the row keeps
 // its own click and drag. `on` gets the press's cx so the caller can clear the
 // row's hover once it fired.
@@ -252,7 +259,7 @@ export default class Spaces {
       const root = top.stdout.replace(/\n$/, "");
       // The repo's own .git folder names it; a worktree's top differs from it.
       const repo = common.stdout.replace(/\n$/, "");
-      const name = repo.endsWith("/.git") ? base(repo.slice(0, -5)) : base(repo).replace(/\.git$/, "");
+      const name = repoName(repo);
       // No branch means a detached HEAD; `gitLine` draws "detached" for null.
       const branch = head.code === 0 ? head.stdout.trim().replace(/^refs\/heads\//, "") : null;
       const [ahead, behind] = counts.code === 0 ? counts.stdout.trim().split(/\s+/).map(Number) : [0, 0];

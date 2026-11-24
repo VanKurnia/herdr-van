@@ -108,7 +108,8 @@ export default class Pane {
     const watched = modPane ? shared("herdr-filechanges.panels")?.[p.tab] ?? null : null;
     const name = modPane
       ? PANEL.label
-      : ((p.program?.agent || p.program?.shell) && p.program.name) || p.title || p.program?.name || "shell";
+      : p.name
+        || ((p.program?.agent || p.program?.shell) && p.program.name) || p.title || p.program?.name || "shell";
     const pic = modPane ? icon({ icon: PANEL.icon }, 14) : icon(p.program, 14, t.dim);
     const st = p.status;
     const pane = p.pane;

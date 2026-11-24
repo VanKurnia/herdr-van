@@ -9,8 +9,9 @@ import { agents, terminals, panes, focused, spaces, run, theme, shared, setShare
 import { claimSidebarHover, narrow, icon, menuCard, spaceColors, spaceFill, sectionTitle, treeLines } from "./lib.js";
 
 // Drops the status glyph, spinner and separator an agent puts before its title, and Codex's
-// `[ ! ]` mark; stops at an opening bracket so a bracketed title keeps it.
-const clean = (s) => (s ?? "").replace(/^[^\p{L}\p{N}\p{Ps}\p{Pi}]+/u, "").replace(/^\[ [!.] \] /, "").trim();
+// `[ ! ]` mark; stops at an opening bracket so a bracketed title keeps it, and keeps a
+// leading emoji unless it is a known status mark.
+const clean = (s) => (s ?? "").replace(/^(?:\[ [!.] \] |[✋⏳]\uFE0F?(?=\s)|(?!(?:\p{Emoji}\uFE0F|[#*]\u20E3))[^\p{L}\p{N}\p{Ps}\p{Pi}\p{Emoji_Presentation}])+/u, "").trim();
 
 // The pane whose title speaks for a tab: its agent, else the focused one, else the first.
 function lead(mine) {
