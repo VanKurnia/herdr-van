@@ -330,7 +330,7 @@ export default class Tabs {
     const slot = this.waveW / (SLOTS - 1);
     const bandW = (SLOTS + LEAD - 1) * slot;
     const speed = shape
-      ? div().id("tab-speed").relative().flex_1().min_w(0).h_full()
+      ? div().id("tab-speed").relative().flex_1().min_w(0).h_full().overflow_hidden()
         .on_size_change((size, cx) => { if (size.width !== this.waveW) { this.waveW = size.width; cx.notify(); } })
         .tooltip(`Tokens per second, last ${Math.round((rates.length * BUCKET_MS) / 60000)} min · best ${Math.round(shape.top)}, scale ${shape.peak}`)
         .when(!this.onBar && this.waveW > 0, el => el
