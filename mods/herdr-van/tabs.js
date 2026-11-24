@@ -20,16 +20,17 @@ const SETTLE_MS = 600; // writes arrive in bursts; a burst is one message
 
 // The bar's span is time, not messages: a point per finished message slid a slot every few seconds
 // during a turn, several at once when a burst landed, and re-spaced the whole line on every arrival.
-// One point per BUCKET_MS instead, so the band advances one slot every 15 s however messages fall.
+// One point per BUCKET_MS instead, so the band advances one slot at a fixed rate however messages
+// fall — five minutes across the bar.
 const SLOTS = 60;
-const BUCKET_MS = 15 * 1000;
+const BUCKET_MS = 5 * 1000;
 // Drawn this many slices wider than the bar, to the right: new data is drawn where it cannot be seen
 // and drifts in, rather than appearing at the edge.
 const LEAD = 2;
 const SLICES = SLOTS + LEAD; // the band's points: what the bar shows, plus the lead
 // The slide is drawn by hand, a fraction of a slot per frame: the curve is geometry, and the
 // compositor cannot interpolate between two of its shapes. One notify per frame redraws the window,
-// so the frame is as long as it can be — here it moves a third of a pixel.
+// so the frame is as long as it can be — here it moves under a pixel.
 const GLIDE_MS = 200;
 
 // A step rather than the sample's own maximum: the box keeps its scale while a message arrives, so
