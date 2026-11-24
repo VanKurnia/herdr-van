@@ -1,6 +1,6 @@
 import { View, div, svg, list } from "gpui-kit";
 import { v_flex, h_flex, v_resizable, resizable_panel, Editor, EditorState, Scrollbar, v_virtual_list } from "gpui-base";
-import { appHome, home, agents, focused, panes, props, closeOverlay, readTextFile, run, shared, setShared, terminals, theme, settings, watchFolder } from "herdr";
+import { appHome, checking, home, agents, focused, panes, props, closeOverlay, readTextFile, run, shared, setShared, terminals, theme, settings, watchFolder } from "herdr";
 
 // The snapshot the `herdr-filechanges` pi extension writes: pi's own log of the
 // files it edited since the last accept (baselines from the session entries),
@@ -208,6 +208,8 @@ export default class HerdrFileChanges extends View {
     this.closing = false;  // the host is gone and this panel has asked to close
     this.publishedTab = null;  // the tab whose header names the pi this panel shows
     this.handle = cx.focus_handle();
+    // A check loads this mod for real: don't start the snapshot watch, the poll or a read.
+    if (checking()) return;
     this.sync(cx);
     // The extension replaces the snapshot atomically; watch its folder instead of polling.
     cx.spawn(async (cx) => {

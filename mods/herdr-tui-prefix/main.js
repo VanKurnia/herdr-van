@@ -12,7 +12,7 @@
 
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { closeOverlay, focused, hc, layout, nextCommand, notify, openOverlay, props, run, setShared, shared, theme, window } from "herdr";
+import { checking, closeOverlay, focused, hc, layout, nextCommand, notify, openOverlay, props, run, setShared, shared, theme, window } from "herdr";
 
 // How long the prefix waits for its key. An armed prefix that never lets go
 // swallows the next keystroke whenever it comes, so it times out and the badge
@@ -88,6 +88,9 @@ export default class HerdrTuiPrefix extends View {
     this.handle.focus();
     // The guide has nothing to wait for.
     if (props()?.guide) return;
+    // A check loads this mod for real; arming the prefix there would start a cancel timer
+    // and a command loop that nothing ever answers.
+    if (checking()) return;
     setShared(ARM, true);
     cx.timer.after(WAIT, () => this.cancel());
     // The mod-specific binding beats the global/terminal opener while we wait.
