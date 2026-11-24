@@ -204,6 +204,7 @@ export default class HerdrFileChanges extends View {
     this.rowsKey = null;
     this.fileText = null;    // { path, text } for "file" mode
     this.watching = false;
+    this.syncSeq = 0;  // the newest sync wins: a task whose number is stale drops its result
     this.hostTab = null;   // the tab the pinning host pane lives in, once seen
     this.closing = false;  // the host is gone and this panel has asked to close
     this.publishedTab = null;  // the tab whose header names the pi this panel shows
@@ -263,18 +264,19 @@ export default class HerdrFileChanges extends View {
     // The header names the pi without waiting for a snapshot: it needs no file data.
     this.publish(address, sources.length);
     if (!address) return;
+    const seq = ++this.syncSeq;
     cx.spawn(async (cx) => {
-      const snapshots = {};
-      for (const source of sources) {
+      const reads = sources.map(async (source) => {
         // pi replaces its snapshot by rename, so a read can land mid-swap, and a session
         // may never have written one: neither may blank a list the person is reading.
         const { on, name } = splitAddress(source);
         const text = await readTextFile(snapshotPath(name), { on }).catch(() => null);
         let fresh = null;
         try { if (text !== null) fresh = JSON.parse(text); } catch { fresh = null; }
-        snapshots[source] = fresh ?? this.snapshots[source] ?? null;
-      }
-      if (address !== this.address) return;
+        return [source, fresh ?? this.snapshots[source] ?? null];
+      });
+      const snapshots = Object.fromEntries(await Promise.all(reads));
+      if (seq !== this.syncSeq || address !== this.address) return;
       this.sources = sources;
       this.snapshots = snapshots;
       const files = this.mergedFiles();
