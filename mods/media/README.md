@@ -118,7 +118,10 @@ and `helper.lock` arriving in the same batch never trigger a re-read.
 ### The clock and the transport
 
 The title line ends with `elapsed / total`, and the artist line ends with
-previous, play/pause and next. Both come from data the helper already publishes:
+previous, play/pause and next. The buttons are faded out until the pointer is on
+the row: they keep their place, so nothing shifts when they appear, and the fade
+is the row's own `on_hover` with a 120 ms native transition. Both come from data
+the helper already publishes:
 `pos` and `dur` (seconds) are read from the session's timeline on every poll. No
 duration means the player has no timeline, so the clock is left out rather than
 shown frozen; a duration with no position shows the length alone. A position that

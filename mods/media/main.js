@@ -297,9 +297,15 @@ export default class Media extends View {
       pos: elapsedPos(Number(this.state?.pos) || 0, playing ? Date.now() - this.posAt : 0),
       dur: Number(this.state?.dur) || 0,
       transport,
+      hovered: this.hovered,
       onPrev: (cx) => this.send("prev", cx),
       onToggle: (cx) => this.send("toggle", cx),
       onNext: (cx) => this.send("next", cx),
+      onHover: (on, cx) => {
+        if (on === this.hovered) return;
+        this.hovered = on;
+        cx.notify();
+      },
       onWidth: (size, cx) => {
         if (Math.round(size.width) === Math.round(this.width)) return;
         const before = this.wantsBars();

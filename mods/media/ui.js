@@ -208,10 +208,12 @@ export function row({
   pos,
   dur,
   transport,
+  hovered,
   onPrev,
   onToggle,
   onNext,
   onWidth,
+  onHover,
 }) {
   const art = cover
     ? image(cover).w(COVER_PX).h(COVER_PX).rounded(6).flex_none()
@@ -276,9 +278,13 @@ export function row({
           )
           .when(transport, (el) =>
             el.child(
+              // Faded rather than removed, so the title and artist do not shift when the
+              // pointer arrives: the buttons keep their place, only their ink appears.
               h_flex()
                 .items_center()
                 .gap(2)
+                .opacity(hovered ? 1 : 0)
+                .transition("opacity", 120)
                 .child(button("prev", "prev.svg", onPrev))
                 .child(button("toggle", playing ? "pause.svg" : "play.svg", onToggle))
                 .child(button("next", "next.svg", onNext)),
@@ -298,6 +304,7 @@ export function row({
     .when(compact, (el) => el.justify_center())
     .when(!compact, (el) => el.justify_end())
     .on_size_change((size, cx) => onWidth(size, cx))
+    .on_hover((on, cx) => onHover(on, cx))
     .when(Boolean(hint), (el) => el.tooltip(hint))
     .when(!compact, (el) => el.child(bars(levels, playing, offline, t)))
     .child(
