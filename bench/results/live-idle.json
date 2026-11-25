@@ -1,0 +1,47 @@
+{
+  "summary": {
+    "Label": "idle, layout herdr-van",
+    "Seconds": 60.0,
+    "CpuSec": 7.45,
+    "CorePct": 12.42,
+    "At": "2026-11-25 10:52:04"
+  },
+  "processes": [
+    {
+      "Process": "herdr-app",
+      "Pid": 18372,
+      "CpuSec": 7.14,
+      "CorePct": 11.9,
+      "WsBefore": 192.9,
+      "WsAfter": 191.5,
+      "Threads": 26
+    },
+    {
+      "Process": "herdr-core",
+      "Pid": 2040,
+      "CpuSec": 0.12,
+      "CorePct": 0.21,
+      "WsBefore": 22.9,
+      "WsAfter": 22.9,
+      "Threads": 22
+    },
+    {
+      "Process": "herdr-core",
+      "Pid": 13344,
+      "CpuSec": 0.16,
+      "CorePct": 0.26,
+      "WsBefore": 22.1,
+      "WsAfter": 22.1,
+      "Threads": 4
+    },
+    {
+      "Process": "herdr-core",
+      "Pid": 18208,
+      "CpuSec": 0.03,
+      "CorePct": 0.05,
+      "WsBefore": 15.0,
+      "WsAfter": 15.0,
+      "Threads": 2
+    }
+  ]
+}

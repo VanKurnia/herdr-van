@@ -1,0 +1,47 @@
+{
+  "summary": {
+    "Label": "A: wave with data",
+    "Seconds": 60.0,
+    "CpuSec": 8.69,
+    "CorePct": 14.48,
+    "At": "2026-11-25 10:53:30"
+  },
+  "processes": [
+    {
+      "Process": "herdr-app",
+      "Pid": 18372,
+      "CpuSec": 8.31,
+      "CorePct": 13.85,
+      "WsBefore": 191.2,
+      "WsAfter": 192.0,
+      "Threads": 25
+    },
+    {
+      "Process": "herdr-core",
+      "Pid": 2040,
+      "CpuSec": 0.14,
+      "CorePct": 0.23,
+      "WsBefore": 22.9,
+      "WsAfter": 22.9,
+      "Threads": 22
+    },
+    {
+      "Process": "herdr-core",
+      "Pid": 13344,
+      "CpuSec": 0.22,
+      "CorePct": 0.36,
+      "WsBefore": 22.1,
+      "WsAfter": 22.1,
+      "Threads": 4
+    },
+    {
+      "Process": "herdr-core",
+      "Pid": 18208,
+      "CpuSec": 0.02,
+      "CorePct": 0.03,
+      "WsBefore": 15.0,
+      "WsAfter": 15.0,
+      "Threads": 2
+    }
+  ]
+}
