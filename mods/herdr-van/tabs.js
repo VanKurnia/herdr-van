@@ -334,6 +334,9 @@ export default class Tabs {
     return h_flex().id("tab-bar").size_full().min_w(0).pl(lightsPadding).items_center().overflow_hidden()
       .on_hover((on, cx) => { if (on !== this.onBar) { this.onBar = on; cx.notify(); } })
       .on_mouse_up("left", () => { this.pressed = null; })
+      // A drag can end anywhere; only a release inside the bar clears the press, so the next move
+      // that reports nothing held finishes the job. Passive: it cannot disturb the release itself.
+      .on_window_mouse_move((e) => { if (this.pressed !== null && e.pressed_button !== "left") this.pressed = null; })
       .on_scroll_wheel(e => this.wheel(e))
       .child(h_flex().id("tab-strip").flex_none().h_full().items_center()
         .children(shown.map(item)))
