@@ -431,6 +431,9 @@ export default class HerdrFileChanges extends View {
       font_size: settings().font_size,
       syntax: SYNTAX(theme()),
     });
+    // A hard tab would take the default width and run the line out of the panel; the diff pads to
+    // four-column stops, so the file view matches it.
+    if (text.includes("\t")) this.editor.set_tab_size(4, false);
     this.editorKey = key;
   }
 
