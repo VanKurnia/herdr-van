@@ -81,12 +81,16 @@ export default class Spaces {
     this.revealed = null; // the space id the list last scrolled to
     this.revealedAt = -1; // …and the row it stood on, so a card that moves is revealed too
     this.refreshMachines(cx);
-    cx.timer.every(15000, cx => this.refreshMachines(cx));
+    // A list nobody can see is not refreshed; the first tick after the window returns does it.
+    cx.timer.every(15000, cx => { if (window()?.visible === false) return; this.refreshMachines(cx); });
     // Whatever `due` waits for needs no faster tick than this; the rest is event-driven.
     cx.timer.every(1000, (cx) => this.checkNew(cx));
     // Brings the process records up to date with the core; it writes shared state
     // only when something changed, and that write is what redraws the rows.
-    cx.timer.every(2000, (cx) => cx.spawn(() => syncProcs()));
+    cx.timer.every(2000, (cx) => {
+      if (window()?.visible === false) return;
+      cx.spawn(() => syncProcs());
+    });
   }
 
   checkNew(cx) {
@@ -96,7 +100,7 @@ export default class Spaces {
     for (const s of sp) if (!this.shown.has(s.id)) this.born[s.id] ??= now;
     this.capture(cx, sp, ps);
     const due = this.due(now, sp, ps);
-    if (due.size) this.refreshGit(due, cx);
+    if (due.size && window()?.visible !== false) this.refreshGit(due, cx);
     if (sp.some((s) => !this.shown.has(s.id))) cx.notify();
   }
 

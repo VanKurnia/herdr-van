@@ -5,7 +5,7 @@
 
 import { div, svg } from "gpui-kit";
 import { v_flex, h_flex, ScrollHandle, InputState, Input } from "gpui-base";
-import { agents, terminals, panes, focused, spaces, run, theme, shared, setShared, setAgentOrder, openOverlay, closeOverlay, props } from "herdr";
+import { agents, terminals, panes, focused, spaces, run, theme, shared, setShared, setAgentOrder, openOverlay, closeOverlay, props, window } from "herdr";
 import { claimSidebarHover, narrow, icon, menuCard, spaceColors, spaceFill, sectionTitle, treeLines } from "./lib.js";
 
 // Drops the status glyph, spinner and separator an agent puts before its title, and Codex's
@@ -104,7 +104,11 @@ export default class Agents {
     // Pins used to live here; `adoptPins` hands them to the terminals that still exist.
     try { this.pendingPins = JSON.parse(localStorage.getItem("pins") ?? "[]"); } catch { this.pendingPins = []; }
     if (!Array.isArray(this.pendingPins)) this.pendingPins = [];
-    cx.timer.every(30000, (cx) => cx.notify());
+    // Ages are re-drawn on a tick; a window nobody is presenting has nothing to age.
+    cx.timer.every(30000, (cx) => {
+      if (window()?.visible === false) return;
+      cx.notify();
+    });
   }
 
   // Stamps agents whose state changed. Done and idle count as one: looking at a

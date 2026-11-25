@@ -209,6 +209,12 @@ export default class Tabs {
   // leaves the bar behind instead of freezing it. The data shifts and the phase returns to zero in the
   // same frame, so the band never jumps.
   glide(cx) {
+    // Hidden or minimized: the slide would repaint a window nobody can see, and the wall-clock
+    // catch-up would jump the band anyway. Stop the clock so it resumes in phase.
+    if (window()?.visible === false) {
+      this.slotAt = 0;
+      return;
+    }
     if (!this.speed.length && !this.pending.length) return; // nothing followed: nothing to draw
     // A band scrolled down to the floor is a flat line: sliding it changes no pixel, so the clock stops
     // instead of redrawing the window over an identical picture. Clearing slotAt restarts the clock in
