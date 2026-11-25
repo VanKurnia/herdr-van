@@ -30,8 +30,8 @@ const LEAD = 2;
 const SLICES = SLOTS + LEAD; // the band's points: what the bar shows, plus the lead
 // The slide is drawn by hand, a fraction of a slot per frame: the curve is geometry, and the
 // compositor cannot interpolate between two of its shapes. One notify per frame redraws the window,
-// so the frame is as long as it can be — here it moves under a pixel.
-const GLIDE_MS = 200;
+// so the step is as long as it can be while it still reads as motion — an eighth of a slot, a few px.
+const GLIDE_MS = 400;
 
 // A step rather than the sample's own maximum: the box keeps its scale while a message arrives, so
 // two moments in the same session can be compared by eye.
