@@ -5,7 +5,7 @@
 import { div, svg } from "gpui-kit";
 import { v_flex, h_flex, ScrollHandle } from "gpui-base";
 import { spaces, machines, panes, run, openOverlay, exec, hc, theme, shared, setShared, watchFolder, window, notify } from "herdr";
-import { avatar, claimSidebarHover, narrow, onSidebar, place, spaceColors, spaceFill, icon, leadingEmoji, sectionTitle, treeLines } from "./lib.js";
+import { avatar, claimSidebarHover, hidden, narrow, onSidebar, place, spaceColors, spaceFill, icon, leadingEmoji, sectionTitle, treeLines } from "./lib.js";
 import { readDoc, snapshotDoc, saveSpace, saveAuto, signature, list, writeList, liveRecords, MODE, dropRecord, openWorkspace } from "./workspace.js";
 import { procsOf, liveByAddress, syncProcs, stopProc, forgetProc, rerunProc } from "./runner.js";
 import { listIcons, pickerHeight } from "./iconPicker.js";
@@ -82,15 +82,12 @@ export default class Spaces {
     this.revealedAt = -1; // …and the row it stood on, so a card that moves is revealed too
     this.refreshMachines(cx);
     // A list nobody can see is not refreshed; the first tick after the window returns does it.
-    cx.timer.every(15000, cx => { if (window()?.visible === false) return; this.refreshMachines(cx); });
+    cx.timer.every(15000, cx => { if (hidden()) return; this.refreshMachines(cx); });
     // Whatever `due` waits for needs no faster tick than this; the rest is event-driven.
     cx.timer.every(1000, (cx) => this.checkNew(cx));
     // Brings the process records up to date with the core; it writes shared state
     // only when something changed, and that write is what redraws the rows.
-    cx.timer.every(2000, (cx) => {
-      if (window()?.visible === false) return;
-      cx.spawn(() => syncProcs());
-    });
+    cx.timer.every(2000, (cx) => { if (hidden()) return; cx.spawn(() => syncProcs()); });
   }
 
   checkNew(cx) {
@@ -100,7 +97,7 @@ export default class Spaces {
     for (const s of sp) if (!this.shown.has(s.id)) this.born[s.id] ??= now;
     this.capture(cx, sp, ps);
     const due = this.due(now, sp, ps);
-    if (due.size && window()?.visible !== false) this.refreshGit(due, cx);
+    if (due.size && !hidden()) this.refreshGit(due, cx);
     if (sp.some((s) => !this.shown.has(s.id))) cx.notify();
   }
 
@@ -395,9 +392,10 @@ export default class Spaces {
   gitLine(g, tree, name, t) {
     const raw = g.branch ?? "detached";
     // The name may open with an emoji, which the branch does not carry: compare what is left.
+    const fullName = name.toLowerCase();
     const emoji = leadingEmoji(name);
-    const label = (emoji ? name.slice(emoji.length).trim() : name).toLowerCase();
-    const same = (a) => { const text = a.toLowerCase(); return text === name.toLowerCase() || text === label; };
+    const label = emoji ? name.slice(emoji.length).trim().toLowerCase() : fullName;
+    const same = (a) => { const text = a.toLowerCase(); return text === fullName || text === label; };
     const branch = same(raw) || raw === "master" || raw === "main" ? "" : raw;
     const repo = tree || same(g.name) ? "" : g.name;
     const where = [repo, branch].filter(Boolean).join(" \u00b7 ");

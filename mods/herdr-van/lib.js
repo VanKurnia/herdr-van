@@ -25,6 +25,9 @@ export const findBlock = (id) => walk(layout(), id);
 // The rail goes by width, not a flag: dragging the sidebar's edge narrows it too.
 export const narrow = () => (sidebar()?.size?.px ?? Infinity) < 160;
 
+// A hidden or minimized window has nobody to show work to, so its timers and redraws wait.
+export const hidden = () => window()?.visible === false;
+
 // True while the pointer is on any part of the sidebar. Its parts are separate
 // copies of this mod, so the answer has to travel through shared state; each part
 // claims it by name and clears only its own claim, so moving from one part to the

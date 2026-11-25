@@ -6,7 +6,7 @@
 import { div, svg, image, PathBuilder, Background } from "gpui-kit";
 import { h_flex } from "gpui-base";
 import { spaces, panes, agents, run, openOverlay, theme, window, layout, settings, focused, home, appHome, exec, watchFolder, checking } from "herdr";
-import { sidebar } from "./lib.js";
+import { hidden, sidebar } from "./lib.js";
 
 // Where pi keeps one session log per folder: `sessions/--C--Users-ivan-app--`, the path with its
 // separators and drive colon turned to dashes.
@@ -211,7 +211,7 @@ export default class Tabs {
   glide(cx) {
     // Hidden or minimized: the slide would repaint a window nobody can see, and the wall-clock
     // catch-up would jump the band anyway. Stop the clock so it resumes in phase.
-    if (window()?.visible === false) {
+    if (hidden()) {
       this.slotAt = 0;
       return;
     }
@@ -336,7 +336,7 @@ export default class Tabs {
       .on_mouse_up("left", () => { this.pressed = null; })
       // A drag can end anywhere; only a release inside the bar clears the press, so the next move
       // that reports nothing held finishes the job. Passive: it cannot disturb the release itself.
-      .on_window_mouse_move((e) => { if (this.pressed !== null && e.pressed_button !== "left") this.pressed = null; })
+      .on_window_mouse_move((e) => { if (e.pressed_button !== "left") this.pressed = null; })
       .on_scroll_wheel(e => this.wheel(e))
       .child(h_flex().id("tab-strip").flex_none().h_full().items_center()
         .children(shown.map(item)))

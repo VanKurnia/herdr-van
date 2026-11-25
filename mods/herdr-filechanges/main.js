@@ -228,9 +228,8 @@ export default class HerdrFileChanges extends View {
         cx.notify();
       }
     });
-    // The local snapshot folder is watched; a remote one cannot be, so its panel polls.
-    // A panel nobody can see does not re-read its snapshot; the first tick after the window
-    // returns brings it up to date.
+    // The local snapshot folder is watched; a remote one cannot be, so its panel polls instead, and
+    // only while the window is shown: the first tick after it returns brings the panel up to date.
     cx.timer.every(5000, (cx) => {
       if (window()?.visible === false) return;
       if (!this.watching || this.sources.some((s) => splitAddress(s).on)) this.sync(cx);
@@ -433,7 +432,7 @@ export default class HerdrFileChanges extends View {
     });
     // A hard tab would take the default width and run the line out of the panel; the diff pads to
     // four-column stops, so the file view matches it.
-    if (text.includes("\t")) this.editor.set_tab_size(4, false);
+    this.editor.set_tab_size(4, false);
     this.editorKey = key;
   }
 

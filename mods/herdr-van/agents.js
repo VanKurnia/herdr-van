@@ -5,8 +5,8 @@
 
 import { div, svg } from "gpui-kit";
 import { v_flex, h_flex, ScrollHandle, InputState, Input } from "gpui-base";
-import { agents, terminals, panes, focused, spaces, run, theme, shared, setShared, setAgentOrder, openOverlay, closeOverlay, props, window } from "herdr";
-import { claimSidebarHover, narrow, icon, menuCard, spaceColors, spaceFill, sectionTitle, treeLines } from "./lib.js";
+import { agents, terminals, panes, focused, spaces, run, theme, shared, setShared, setAgentOrder, openOverlay, closeOverlay, props } from "herdr";
+import { claimSidebarHover, hidden, narrow, icon, menuCard, spaceColors, spaceFill, sectionTitle, treeLines } from "./lib.js";
 
 // Drops the status glyph, spinner and separator an agent puts before its title, and Codex's
 // `[ ! ]` mark; stops at an opening bracket so a bracketed title keeps it, and keeps a
@@ -106,7 +106,7 @@ export default class Agents {
     if (!Array.isArray(this.pendingPins)) this.pendingPins = [];
     // Ages are re-drawn on a tick; a window nobody is presenting has nothing to age.
     cx.timer.every(30000, (cx) => {
-      if (window()?.visible === false) return;
+      if (hidden()) return;
       cx.notify();
     });
   }
