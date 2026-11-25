@@ -5,7 +5,7 @@
 import { div, svg } from "gpui-kit";
 import { v_flex, h_flex, ScrollHandle } from "gpui-base";
 import { spaces, machines, panes, run, openOverlay, exec, hc, theme, shared, setShared, watchFolder, window, notify } from "herdr";
-import { avatar, claimSidebarHover, narrow, onSidebar, place, spaceColors, spaceFill, icon, sectionTitle, treeLines } from "./lib.js";
+import { avatar, claimSidebarHover, narrow, onSidebar, place, spaceColors, spaceFill, icon, leadingEmoji, sectionTitle, treeLines } from "./lib.js";
 import { readDoc, snapshotDoc, saveSpace, saveAuto, signature, list, writeList, liveRecords, MODE, dropRecord, openWorkspace } from "./workspace.js";
 import { procsOf, liveByAddress, syncProcs, stopProc, forgetProc, rerunProc } from "./runner.js";
 import { listIcons, pickerHeight } from "./iconPicker.js";
@@ -394,7 +394,10 @@ export default class Spaces {
   // left — the row still reserves the line, it just stays empty.
   gitLine(g, tree, name, t) {
     const raw = g.branch ?? "detached";
-    const same = (a) => a.toLowerCase() === name.toLowerCase();
+    // The name may open with an emoji, which the branch does not carry: compare what is left.
+    const emoji = leadingEmoji(name);
+    const label = (emoji ? name.slice(emoji.length).trim() : name).toLowerCase();
+    const same = (a) => { const text = a.toLowerCase(); return text === name.toLowerCase() || text === label; };
     const branch = same(raw) || raw === "master" || raw === "main" ? "" : raw;
     const repo = tree || same(g.name) ? "" : g.name;
     const where = [repo, branch].filter(Boolean).join(" \u00b7 ");

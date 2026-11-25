@@ -75,13 +75,18 @@ export function spaceFill(t, s) {
   return color.startsWith("#") ? color : (MARK[color] ?? t[color]);
 }
 
+// A name that starts with an emoji keeps the whole glyph in its tile: a flag, a skin tone or a
+// joined sequence is several code points, and the first alone draws a fragment.
+const EMOJI = /^(?:[#*0-9]\uFE0F?\u20E3|\p{Regional_Indicator}{2}|(?:\p{Emoji_Presentation}|(?=[\u{1F000}-\u{1FFFF}])\p{Extended_Pictographic}|\p{Extended_Pictographic}(?=\uFE0F)|\p{Emoji_Modifier_Base}(?=\p{Emoji_Modifier}))\uFE0F?[\p{Emoji_Modifier}\u{E0020}-\u{E007F}]*(?:\u200D\p{Extended_Pictographic}\uFE0F?\p{Emoji_Modifier}?)*)(?![\p{Grapheme_Extend}\p{Emoji_Modifier}\u200D])/u;
+export const leadingEmoji = (name) => EMOJI.exec(name)?.[0] ?? null;
+
 // The tile a space is drawn with: its colour and initial, or its icon — an icon
 // stands alone, so the colour only marks the spaces that carry a letter. `size`
 // lets a row with a second line grow the tile to fill both, the corner and the
 // letter scaling with it, so the rail still reads as one column of tiles.
 export const avatar = (fill, name, ink, icon, size = 24) => h_flex().size(size).flex_none().rounded(size >= 30 ? 8 : 6).items_center().justify_center()
   .when(Boolean(icon), (el) => el.child(image(icon).w(size - 2).h(size - 2).flex_none()))
-  .when(!icon, (el) => el.bg(fill).child(div().text_size(Math.round(size * 0.54)).font_bold().text_color(ink).child([...name][0]?.toUpperCase() ?? "?")));
+  .when(!icon, (el) => el.bg(fill).child(div().text_size(Math.round(size * 0.54)).font_bold().text_color(ink).child(leadingEmoji(name) ?? ([...name][0]?.toUpperCase() ?? "?"))));
 
 // A row's tree connector, drawn as hairlines over it: a stem at each nesting column, running
 // the row's full height to reach the sibling below and stopping at its own branch on the last
