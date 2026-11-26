@@ -28,10 +28,11 @@ const BUCKET_MS = 3333;
 // and drifts in, rather than appearing at the edge.
 const LEAD = 2;
 const SLICES = SLOTS + LEAD; // the band's points: what the bar shows, plus the lead
-// The slide is drawn by hand, a fraction of a slot per frame: the curve is geometry, and the
-// compositor cannot interpolate between two of its shapes. One notify per frame redraws the window,
-// so the step is as long as it can be while it still reads as motion — an eighth of a slot, a few px.
-const GLIDE_MS = 400;
+// The slide is drawn by hand: the curve is geometry, and the compositor cannot interpolate between two
+// of its shapes. Each frame repaints the whole window, so the step is set to land under a pixel.
+const GLIDE_MS = 120;
+// Carried by the compositor as a plain number, so the fade costs no frames of its own.
+const FADE_MS = 500;
 
 // A step rather than the sample's own maximum: the box keeps its scale while a message arrives, so
 // two moments in the same session can be compared by eye.
@@ -99,6 +100,9 @@ export default class Tabs {
   init(_props, cx) {
     this.pressed = null;
     this.onBar = false; // the pointer is on the tab bar, so its buttons are drawn
+    this.barTools = false; // the buttons themselves: they take the band's width, so they wait for it
+    this.follows = false; // the focused terminal is a pi agent, whose session the wave reads
+    this.held = null; // the wave's last geometry, kept so it can fade out and back in
     // A wheel gesture's progress: how far it has moved, how many tabs it already stepped, and when
     // it last stepped (ms). Shared by every event of one flick.
     this.swipe = { acc: 0, steps: 0, at: 0, last: 0 };
@@ -126,6 +130,7 @@ export default class Tabs {
         const next = follows ? `${agent.address}|${cwd}` : null;
         if (next !== key) {
           key = next;
+          this.follows = follows;
           // Safe after settlement, so a watch that already answered needs no guard.
           watch?.cancel();
           watch = null;
@@ -257,6 +262,17 @@ export default class Tabs {
     run(e.delta.y > 0 ? "tab.prev" : "tab.next");
   }
 
+  // The pointer arriving on the bar, or leaving it.
+  hover(on, cx) {
+    if (on === this.onBar) return;
+    this.onBar = on;
+    // The buttons are laid out beside the band, so they take its width: arriving while it fades would
+    // squeeze the shape. They go at once, when the band is near nothing and its box may grow back.
+    if (on) cx.spawn(async (cx) => { await park(cx, FADE_MS); if (this.onBar) { this.barTools = true; cx.notify(); } });
+    else this.barTools = false;
+    cx.notify();
+  }
+
   render() {
     const t = theme();
     const space = spaces().find(p => p.active);
@@ -310,9 +326,11 @@ export default class Tabs {
     // wrong width back into whatever was measured from them. Overflowing tabs are clipped instead
     // (the bar hides its overflow) and the wheel still steps through them.
     const rates = this.speed;
-    // The wave is drawn only while the pointer is away from the bar, but its box stays: the tooltip
-    // hangs off it, and the numbers live there.
-    const shape = rates.length < 2 ? null : waveShape(rates, this.peak);
+    // The band is drawn only while the pointer is away from the bar and a session is behind it; what
+    // it last drew outlives both, so a band with no data behind it still fades instead of vanishing.
+    const live = this.follows && rates.length >= 2;
+    if (live) this.held = waveShape(rates, this.peak);
+    const shape = this.held;
     // `window` here is the gpui window the mod draws into, not the app's window data (imported as
     // `window` from herdr above), so it is reached through globalThis.
     const paint = globalThis.window;
@@ -321,18 +339,21 @@ export default class Tabs {
     // width in px.
     const slot = this.waveW / (SLOTS - 1);
     const phase = this.slotAt ? Math.min(1, (Date.now() - this.slotAt) / BUCKET_MS) : 0;
+    // Only the opacity changes: a band that unmounted would have nothing to fade out with.
+    const lit = live && !this.onBar && this.waveW > 0;
     const wave = shape
       ? div().id("tab-speed").relative().flex_1().min_w(0).h_full().overflow_hidden()
         .on_size_change((size, cx) => { if (size.width !== this.waveW) { this.waveW = size.width; cx.notify(); } })
-        .tooltip(`Tokens per second, ${Math.round((rates.length * BUCKET_MS) / 60000)} min · best ${Math.round(shape.top)} · scale ${this.peak}`)
-        .when(!this.onBar && this.waveW > 0, el => el
-          .child(div().id("tab-wave").absolute().top(3).bottom(0).left(-(LEAD + phase) * slot).w((SLICES - 1) * slot)
-            .child(paint.paint_path(shape.body, Background.linear_gradient(180, `${t.accent}99`, `${t.accent}00`))
-              .absolute().top(0).left(0).right(0).bottom(0))
-            .child(paint.paint_path(shape.line, t.accent).absolute().top(0).left(0).right(0).bottom(0))))
+        .when(live, el => el.tooltip(`Tokens per second, ${Math.round((rates.length * BUCKET_MS) / 60000)} min · best ${Math.round(shape.top)} · scale ${this.peak}`))
+        .child(div().id("tab-wave").absolute().top(3).bottom(0).left(-(LEAD + phase) * slot).w((SLICES - 1) * slot)
+          .opacity(lit ? 1 : 0)
+          .transition("opacity", FADE_MS)
+          .child(paint.paint_path(shape.body, Background.linear_gradient(180, `${t.accent}99`, `${t.accent}00`))
+            .absolute().top(0).left(0).right(0).bottom(0))
+          .child(paint.paint_path(shape.line, t.accent).absolute().top(0).left(0).right(0).bottom(0)))
       : null;
     return h_flex().id("tab-bar").size_full().min_w(0).pl(lightsPadding).items_center().overflow_hidden()
-      .on_hover((on, cx) => { if (on !== this.onBar) { this.onBar = on; cx.notify(); } })
+      .on_hover((on, cx) => this.hover(on, cx))
       .on_mouse_up("left", () => { this.pressed = null; })
       // A drag can end anywhere; only a release inside the bar clears the press, so the next move
       // that reports nothing held finishes the job. Passive: it cannot disturb the release itself.
@@ -340,8 +361,8 @@ export default class Tabs {
       .on_scroll_wheel(e => this.wheel(e))
       .child(h_flex().id("tab-strip").flex_none().h_full().items_center()
         .children(shown.map(item)))
-      .when(this.onBar, el => el.child(button("tab-new", "+", () => openOverlay({ mod: "new-menu", kind: "popup", width: 250, height: 512 }))))
+      .when(this.barTools, el => el.child(button("tab-new", "+", () => openOverlay({ mod: "new-menu", kind: "popup", width: 250, height: 512 }))))
       .child(wave ?? div().flex_1())
-      .when(this.onBar && Boolean(w?.buttons), el => el.child(button("close-window", closeIcon, () => run("window.close"))));
+      .when(this.barTools && Boolean(w?.buttons), el => el.child(button("close-window", closeIcon, () => run("window.close"))));
   }
 }
