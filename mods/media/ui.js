@@ -183,6 +183,9 @@ export function row({
   const band = bandOf(width, height);
   const artW = band.width;
   const side = Math.max(artW, height);
+  // One native path for all three veils: `Path` is immutable geometry, so the same one is painted
+  // three times instead of being built three times.
+  const veil = fullRect();
   const art = div()
     .id("media-art")
     .absolute()
@@ -207,7 +210,7 @@ export function row({
         .child(
           // `.bg()` takes a colour only, so a gradient has to stay a painted path here.
           paint
-            .paint_path(fullRect(), Background.linear_gradient(180, `${SCRIM}00`, SCRIM))
+            .paint_path(veil, Background.linear_gradient(180, `${SCRIM}00`, SCRIM))
             .absolute()
             .top(FADE_TOP)
             .left(0)
@@ -218,7 +221,7 @@ export function row({
         // third of the way down.
         .child(
           paint
-            .paint_path(fullRect(), Background.linear_gradient(180, SCRIM, `${SCRIM}00`))
+            .paint_path(veil, Background.linear_gradient(180, SCRIM, `${SCRIM}00`))
             .absolute()
             .top(0)
             .left(0)
@@ -230,7 +233,7 @@ export function row({
         // edge to see, and arrives just short of solid at the foot.
         .child(
           paint
-            .paint_path(fullRect(), Background.linear_gradient(180, `${SCRIM}00`, `${SCRIM}f0`))
+            .paint_path(veil, Background.linear_gradient(180, `${SCRIM}00`, `${SCRIM}f0`))
             .absolute()
             .top(GRAPH_TOP)
             .left(0)
@@ -284,8 +287,7 @@ export function row({
               .overflow_x_hidden()
               .truncate()
               .text_size(10.5)
-              .text_color(t.foreground)
-              .opacity(0.8)
+              .text_color(t.accent)
               .child(subtitle),
           ),
         ),

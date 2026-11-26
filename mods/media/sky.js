@@ -22,6 +22,7 @@ const CAP_SINK = 0.5; // px a peak cap falls per 80 ms
 const LIFT = 0.7; // the curve the level is raised by, so a column is as tall as it looks in the mix
 const SWELL = 0.22; // how much the beat swells the whole skyline
 const ZONES = 8; // shared paths: the tips are gathered into this many colour zones
+const BODY_ZONES = 24; // the columns' own colour steps: finer than the tips, so the ramp stays smooth
 
 // The bands each voice listens to, its floor (our levels are 0..1), how much of a rise counts as a
 // hit, how many sparks a hit throws and how far they rise. Our helper smooths each band before
@@ -239,66 +240,78 @@ export class Sky {
     const tone = palette(n, t);
     const out = [];
     // The lit pixel, the cap and the flash were three elements per column — about 900 at a wide
-    // window. They are gathered into a few shared paths below: one per colour zone for the tips,
-    // because their colour follows the column, and one each for the caps and the flash.
+    // window. They are gathered into a few shared paths below: one per colour zone for the columns,
+    // because their colour follows the frequency, and one each for the caps and the flash.
+    const bodies = []; // one dashed path per colour zone: the columns of that shade in one path
     const tips = [];
     let caps = null;
     let flashes = null;
     let topFlash = 0;
+    const baseline = barH - BASE;
     for (let c = 0; c < cols; c++) {
-      // The dissolve toward both ends.
-      const away = Math.abs(c - (cols - 1) / 2) / ((cols - 1) / 2);
-      const edge = 1 - 0.45 * away * away;
       const dots = this.used[c] ?? 1;
       const h = heightOf(dots);
-      const color = tone(c / (cols - 1) * (n - 1));
-      // A gradient needs a plain #rrggbb to hang its alpha on.
-      const shade = /^#[0-9a-fA-F]{6}$/.test(color) ? color : "#ffffff";
-      // One dashed line instead of one quad per dot: the dashes are the dots, so 12 crossings a
-      // column became 1 and the matrix is unchanged — the dots already sat on PITCH_Y.
-      const matrix = PathBuilder.stroke(DOT).dash_array([DOT, PITCH_Y - DOT]);
-      matrix.add_polygon([[DOT / 2, 0], [DOT / 2, h]], false);
-      out.push(
-        paint
-          // Full strength on the top dot, nothing at the baseline; the gradient runs down the
-          // column's box, so every dot in it is a step of that fade.
-          .paint_path(matrix.build(), Background.linear_gradient(180, shade, `${shade}00`))
-          .id(`col-${c}`)
-          .absolute()
-          .left(c * PITCH_X)
-          .bottom(BASE)
-          .w(DOT)
-          .h(h)
-          .opacity((live ? 1 : 0.3) * edge),
-      );
+      const x = c * PITCH_X + DOT / 2;
       const zone = Math.min(ZONES - 1, Math.floor((c / Math.max(1, cols - 1)) * ZONES));
-      const x = c * PITCH_X;
+      const body = Math.min(BODY_ZONES - 1, Math.floor((c / Math.max(1, cols - 1)) * BODY_ZONES));
+      // One dashed line instead of one quad per dot: the dashes are the dots. Drawn from the column's
+      // own top, and two pixels past the baseline so its length is a whole number of dash periods:
+      // the dasher carries its phase from one subpath to the next, so unequal lengths would walk the
+      // dot rows out of line column by column. The tail sits where the fade is already transparent.
+      bodies[body] ??= PathBuilder.stroke(DOT).dash_array([DOT, PITCH_Y - DOT]);
+      bodies[body].add_polygon([[x, baseline - h], [x, baseline + (PITCH_Y - DOT)]], false);
       // A lighter pixel caps a column with more than one, so the outline reads as a lit edge.
       if (live && dots > 1) {
-        const tipY = barH - BASE - h;
+        const tipY = baseline - h;
         tips[zone] ??= PathBuilder.fill();
         tips[zone].add_polygon(
-          [[x, tipY], [x + DOT, tipY], [x + DOT, tipY + DOT], [x, tipY + DOT]],
+          [[x - DOT / 2, tipY], [x + DOT / 2, tipY], [x + DOT / 2, tipY + DOT], [x - DOT / 2, tipY + DOT]],
           true,
         );
       }
       if (!live) continue;
       const cap = this.caps[c] ?? 0;
       if (cap > h + 4) {
-        const capY = barH - BASE - cap - PITCH_Y;
+        const capY = baseline - cap - PITCH_Y;
         caps ??= PathBuilder.fill();
-        caps.add_polygon([[x, capY], [x + DOT, capY], [x + DOT, capY + DOT], [x, capY + DOT]], true);
+        caps.add_polygon(
+          [[x - DOT / 2, capY], [x + DOT / 2, capY], [x + DOT / 2, capY + DOT], [x - DOT / 2, capY + DOT]],
+          true,
+        );
       }
       const flash = this.flash[c] ?? 0;
       if (flash > 0.05) {
-        const flashY = barH - BASE - h;
+        const flashY = baseline - h;
         flashes ??= PathBuilder.fill();
         flashes.add_polygon(
-          [[x, flashY], [x + DOT, flashY], [x + DOT, flashY + DOT], [x, flashY + DOT]],
+          [[x - DOT / 2, flashY], [x + DOT / 2, flashY], [x + DOT / 2, flashY + DOT], [x - DOT / 2, flashY + DOT]],
           true,
         );
         topFlash = Math.max(topFlash, flash);
       }
+    }
+
+    // One element per colour zone, not one per column: about eighty painted pieces become eight.
+    // The fade runs over the band rather than each column's own box, so brightness follows absolute
+    // height — a tip is what keeps a short column lit at its top.
+    for (let z = 0; z < BODY_ZONES; z += 1) {
+      const path = bodies[z];
+      if (!path) continue;
+      const away = Math.abs((z + 0.5) / BODY_ZONES - 0.5) * 2;
+      const edge = (live ? 1 : 0.3) * (1 - 0.45 * away * away);
+      const color = tone(((z + 0.5) / BODY_ZONES) * (n - 1));
+      const shade = /^#[0-9a-fA-F]{6}$/.test(color) ? color : "#ffffff";
+      const head = Math.round(255 * edge).toString(16).padStart(2, "0");
+      out.push(
+        paint
+          .paint_path(path.build(), Background.linear_gradient(180, `${shade}${head}`, `${shade}00`))
+          .id(`cols-${z}`)
+          .absolute()
+          .left(0)
+          .top(0)
+          .w(width)
+          .h(barH),
+      );
     }
 
     for (let z = 0; z < ZONES; z += 1) {
