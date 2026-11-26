@@ -84,6 +84,9 @@ async def sample(writer, manager):
     writer.note_track(key)
     if writer.cover_due():
         writer.take_cover(await read_thumbnail(props.thumbnail))
+    # The row publishes the size it draws the art at; when that changes, re-encode from the bytes
+    # already in hand rather than shipping one fixed size for every sidebar width and zoom.
+    writer.sync_art()
     writer.publish(
         {
             "session": True,

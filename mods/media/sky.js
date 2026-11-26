@@ -21,6 +21,7 @@ const LAND_MS = 150; // how long the dot that lands lingers before it goes
 const CAP_SINK = 0.5; // px a peak cap falls per 80 ms
 const LIFT = 0.7; // the curve the level is raised by, so a column is as tall as it looks in the mix
 const SWELL = 0.22; // how much the beat swells the whole skyline
+const ZONES = 8; // shared paths: the tips are gathered into this many colour zones
 
 // The bands each voice listens to, its floor (our levels are 0..1), how much of a rise counts as a
 // hit, how many sparks a hit throws and how far they rise. Our helper smooths each band before
@@ -226,6 +227,13 @@ export class Sky {
     const paint = globalThis.window;
     const tone = palette(n, t);
     const out = [];
+    // The lit pixel, the cap and the flash were three elements per column — about 900 at a wide
+    // window. They are gathered into a few shared paths below: one per colour zone for the tips,
+    // because their colour follows the column, and one each for the caps and the flash.
+    const tips = [];
+    let caps = null;
+    let flashes = null;
+    let topFlash = 0;
     for (let c = 0; c < cols; c++) {
       // The dissolve toward both ends.
       const away = Math.abs(c - (cols - 1) / 2) / ((cols - 1) / 2);
@@ -235,11 +243,10 @@ export class Sky {
       const color = tone(c / (cols - 1) * (n - 1));
       // A gradient needs a plain #rrggbb to hang its alpha on.
       const shade = /^#[0-9a-fA-F]{6}$/.test(color) ? color : "#ffffff";
-      const matrix = PathBuilder.fill();
-      for (let r = 0; r < dots; r++) {
-        const y = r * PITCH_Y;
-        matrix.add_polygon([[0, y], [DOT, y], [DOT, y + DOT], [0, y + DOT]], true);
-      }
+      // One dashed line instead of one quad per dot: the dashes are the dots, so 12 crossings a
+      // column became 1 and the matrix is unchanged — the dots already sat on PITCH_Y.
+      const matrix = PathBuilder.stroke(DOT).dash_array([DOT, PITCH_Y - DOT]);
+      matrix.add_polygon([[DOT / 2, 0], [DOT / 2, h]], false);
       out.push(
         paint
           // Full strength on the top dot, nothing at the baseline; the gradient runs down the
@@ -253,49 +260,77 @@ export class Sky {
           .h(h)
           .opacity((live ? 1 : 0.3) * edge),
       );
+      const zone = Math.min(ZONES - 1, Math.floor((c / Math.max(1, cols - 1)) * ZONES));
+      const x = c * PITCH_X;
       // A lighter pixel caps a column with more than one, so the outline reads as a lit edge.
       if (live && dots > 1) {
-        out.push(
-          div()
-            .id(`tip-${c}`)
-            .absolute()
-            .left(c * PITCH_X)
-            .bottom(BASE + h - DOT)
-            .w(DOT)
-            .h(DOT)
-            .bg(blend(color, "#ffffff", 0.3))
-            .opacity(0.95 * edge),
+        const tipY = barH - BASE - h;
+        tips[zone] ??= PathBuilder.fill();
+        tips[zone].add_polygon(
+          [[x, tipY], [x + DOT, tipY], [x + DOT, tipY + DOT], [x, tipY + DOT]],
+          true,
         );
       }
       if (!live) continue;
       const cap = this.caps[c] ?? 0;
       if (cap > h + 4) {
-        out.push(
-          div()
-            .id(`cap-${c}`)
-            .absolute()
-            .left(c * PITCH_X)
-            .top(barH - BASE - cap - PITCH_Y)
-            .w(DOT)
-            .h(DOT)
-            .bg(t.border)
-            .opacity(0.55 * edge),
-        );
+        const capY = barH - BASE - cap - PITCH_Y;
+        caps ??= PathBuilder.fill();
+        caps.add_polygon([[x, capY], [x + DOT, capY], [x + DOT, capY + DOT], [x, capY + DOT]], true);
       }
       const flash = this.flash[c] ?? 0;
       if (flash > 0.05) {
-        out.push(
-          div()
-            .id(`flash-${c}`)
-            .absolute()
-            .left(c * PITCH_X)
-            .top(barH - BASE - h)
-            .w(DOT)
-            .h(DOT)
-            .bg(t.foreground)
-            .opacity(0.8 * flash * edge),
+        const flashY = barH - BASE - h;
+        flashes ??= PathBuilder.fill();
+        flashes.add_polygon(
+          [[x, flashY], [x + DOT, flashY], [x + DOT, flashY + DOT], [x, flashY + DOT]],
+          true,
         );
+        topFlash = Math.max(topFlash, flash);
       }
+    }
+
+    for (let z = 0; z < ZONES; z += 1) {
+      const path = tips[z];
+      if (!path) continue;
+      const color = blend(tone(((z + 0.5) / ZONES) * (n - 1)), "#ffffff", 0.3);
+      out.push(
+        paint
+          .paint_path(path.build(), color)
+          .id(`tips-${z}`)
+          .absolute()
+          .left(0)
+          .top(0)
+          .w(width)
+          .h(barH)
+          .opacity(0.95),
+      );
+    }
+    if (caps) {
+      out.push(
+        paint
+          .paint_path(caps.build(), t.border)
+          .id("caps")
+          .absolute()
+          .left(0)
+          .top(0)
+          .w(width)
+          .h(barH)
+          .opacity(0.55),
+      );
+    }
+    if (flashes) {
+      out.push(
+        paint
+          .paint_path(flashes.build(), t.foreground)
+          .id("flashes")
+          .absolute()
+          .left(0)
+          .top(0)
+          .w(width)
+          .h(barH)
+          .opacity(0.8 * topFlash),
+      );
     }
 
     const now = Date.now();

@@ -11,6 +11,28 @@ LEVELS_EVERY_S = 0.08  # the spectrum, published at the rate the row reads it
 COMMANDS = {"prev", "toggle", "next"}
 REPLACE_TRIES = 5  # a rename can lose to a reader on Windows; 4 waits of 20 ms ride it out
 COVER_SETTLE_S = 6.0  # how long after a track change the artwork may still be on its way
+MAX_ART_PX = 512  # the row never draws the art bigger than this
+MIN_ART_PX = 64
+
+
+def shrink_cover(data, px):
+    """Re-encode the artwork at `px` on its longer side: the size the row draws it at."""
+    if not data or not px:
+        return data
+    try:
+        from io import BytesIO
+
+        from PIL import Image
+
+        with Image.open(BytesIO(data)) as image:
+            picture = image.convert("RGBA")
+            if max(picture.size) > px:
+                picture.thumbnail((px, px), Image.LANCZOS)
+            out = BytesIO()
+            picture.save(out, format="PNG", optimize=True)
+            return out.getvalue()
+    except Exception:
+        return data  # art the decoder refuses is still better than none
 
 
 class Writer:
@@ -33,6 +55,8 @@ class Writer:
         self.cover_digest = None  # the bytes behind self.cover, so a re-read of the same art writes nothing
         self.cover_fresh = False  # whether this track has supplied art yet
         self.cover_settle = 0.0  # monotonic deadline while late art is still worth re-reading
+        self.raw_cover = None  # the bytes the player gave us, kept so a resize needs no re-read
+        self.art_px = 0  # the pixel size the current cover file was encoded at
 
     def stopping(self):
         # Written by the mod, never by this process.
@@ -151,22 +175,48 @@ class Writer:
             digest = hashlib.sha1(data).hexdigest()[:8]
             if digest != self.cover_digest:
                 self.cover_digest = digest
+                self.raw_cover = data
+                self.art_px = 0
                 self.cover = self.save_cover(data)
             self.cover_fresh = True
         return self.cover
 
+    def art_wanted(self):
+        """The pixel size the row says it draws, written by the mod from the layout."""
+        try:
+            with open(os.path.join(self.dir, "art.json"), "r", encoding="utf-8") as fh:
+                px = int(json.load(fh).get("px") or 0)
+        except Exception:
+            return 0
+        return max(MIN_ART_PX, min(MAX_ART_PX, px))
+
+    def sync_art(self):
+        """Re-encode when that size changes; True when the published cover path changed."""
+        px = self.art_wanted()
+        if not px or px == self.art_px or self.raw_cover is None:
+            return False
+        self.art_px = px
+        self.cover = self.save_cover(self.raw_cover)
+        return True
+
     def save_cover(self, data):
-        """Store cover art under a content-addressed name; None means no art."""
+        """Store cover art under a content-addressed name, encoded at the size the row draws."""
         if data is None:
             return None
-        name = "cover-%s.png" % hashlib.sha1(data).hexdigest()[:8]
+        px = self.art_px or self.art_wanted() or 0
+        self.art_px = px
+        body = shrink_cover(data, px)
+        digest = hashlib.sha1(body).hexdigest()[:8]
+        # The drawn size belongs in the name: a resize then lands on a new path, which is how the
+        # view learns to reload it. With no known size it keeps the plain content-addressed name.
+        name = "cover-%s-%d.png" % (digest, px) if px else "cover-%s.png" % digest
         path = os.path.join(self.dir, name)
         if not os.path.exists(path):
             with open(path + ".tmp", "wb") as fh:
-                fh.write(data)
+                fh.write(body)
             os.replace(path + ".tmp", path)
             for old in os.listdir(self.dir):
                 if old.startswith("cover-") and old != name:
                     os.unlink(os.path.join(self.dir, old))
-        # A fresh path per track, so the host never shows a decoded stale image.
+        # A fresh path per track and per drawn size, so the host never shows a stale decoded image.
         return "data/media/" + name

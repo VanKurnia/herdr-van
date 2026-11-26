@@ -15,7 +15,13 @@ OpenBLAS DLL.
 ```powershell
 python -m pip install --target "$env:USERPROFILE\.config\herdr-app\mods\media\vendor" `
   winrt-runtime winrt-Windows.Media.Control winrt-Windows.Storage.Streams `
-  winrt-Windows.Foundation winrt-Windows.Storage soundcard numpy
+  winrt-Windows.Foundation winrt-Windows.Storage soundcard numpy Pillow
+```
+
+Pillow re-encodes the artwork at the size the row draws it: the mod publishes
+`data/media/art.json` (`{"px": 272}` from the sidebar's width, height and zoom) and the
+helper keeps the bytes the player handed over, re-encoding only when that number changes.
+Without Pillow the art is still served, just at its full size.
 ```
 
 - `winrt-*` (1.6 MB) reads the media session and the cover art.

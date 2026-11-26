@@ -205,6 +205,7 @@ export function row({
         // Downward: nothing at the seam, the backdrop's own tone at the bottom, which is what takes
         // the art to gone without covering the backdrop with a panel.
         .child(
+          // `.bg()` takes a colour only, so a gradient has to stay a painted path here.
           paint
             .paint_path(fullRect(), Background.linear_gradient(180, `${SCRIM}00`, SCRIM))
             .absolute()

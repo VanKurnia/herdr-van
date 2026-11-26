@@ -14,7 +14,7 @@
 // helper.js, the row's pixels are ui.js.
 
 import { View } from "gpui-kit";
-import { appHome, checking, layout, props, settings, theme, watchFolder, window } from "herdr";
+import { appHome, checking, layout, props, settings, theme, watchFolder, window, writeTextFile } from "herdr";
 import { readText, writeFile } from "./state.js";
 import { backoffMs, startHelper, stopHelper } from "./helper.js";
 import { row, bandOf } from "./ui.js";
@@ -31,7 +31,7 @@ const OFFLINE_AFTER = 2; // failed launches before the row says why it is empty
 const PROTOCOL_V = 1; // the state.json shape this mod reads; mirrors store.py's PROTOCOL_V
 // state.json and a new cover are the only payloads worth re-reading: the watch
 // batches everything in the folder, including tick, beat, cmd and helper.lock.
-const STATE_FILES = /^(state\.json|cover-[0-9a-f]+\.png)$/;
+const STATE_FILES = /^(state\.json|cover-[0-9a-f-]+\.png)$/;
 
 // What launch.ps1 answers when it cannot start the helper. Anything else is a real error to quote.
 const REASON = {
@@ -40,7 +40,7 @@ const REASON = {
   "helper not responding": "helper not responding",
 };
 const PIP =
-  'python -m pip install --target "%USERPROFILE%\\.config\\herdr-app\\mods\\media\\vendor" winrt-runtime winrt-Windows.Media.Control winrt-Windows.Storage.Streams winrt-Windows.Foundation winrt-Windows.Storage soundcard numpy';
+  'python -m pip install --target "%USERPROFILE%\\.config\\herdr-app\\mods\\media\\vendor" winrt-runtime winrt-Windows.Media.Control winrt-Windows.Storage.Streams winrt-Windows.Foundation winrt-Windows.Storage soundcard numpy Pillow';
 
 // herdr's layout() is an untyped tree: find this copy's own block, by the id the
 // layout passes in props, so it can tell when it has been hidden.
@@ -91,10 +91,11 @@ export default class Media extends View {
     if (!this.parked) this.spawnHelper(cx);
     this.read(cx); // a reload starts on an empty payload; a settled track writes nothing
     cx.timer.every(5000, (cx) => this.alive(cx));
-    cx.timer.every(LEVELS_MS, (cx) => this.readLevels(cx));
-    // Sparks and caps move only while something is in flight, and a still skyline costs nothing. The
-    // clock sits below what an arc would like because each frame repaints the whole window.
-    cx.timer.every(FRAME_MS, (cx) => {
+    // One clock for the row: the levels tick also advances the sparks, so a beat is described once
+    // per 80 ms instead of by two timers racing each other for the same frame. A still skyline
+    // notifies nothing at all, which is what GPUI's notify-on-change contract asks for.
+    cx.timer.every(LEVELS_MS, (cx) => {
+      this.readLevels(cx);
       if (!this.presenting()) return;
       this.skyMoving = this.sky.frame();
       if (this.skyMoving) cx.notify();
@@ -169,6 +170,19 @@ export default class Media extends View {
   // The bars, and with them the capture, are only worth paying for while the row is wide enough to
   // draw them, so the beat carries that answer and the helper stops draining the loopback for a
   // panel nobody can see.
+  // The art is drawn as a square as big as the taller of the band's width and the row's height, in
+  // window px. Publishing that number is what lets the helper encode the cover at the size it is
+  // actually drawn, so it is sharp at any sidebar width and zoom without shipping a full image.
+  wantsArt(px, cx) {
+    const want = Math.max(64, Math.min(512, Math.round(px / 8) * 8));
+    if (want === this.artPx) return;
+    this.artPx = want;
+    if (this.parked || checking()) return;
+    cx.spawn(async () => {
+      await writeTextFile(`${appHome()}/data/media/art.json`, JSON.stringify({ px: want }));
+    });
+  }
+
   wantsBars() {
     return !this.parked && this.width >= COMPACT_PX;
   }
@@ -369,6 +383,7 @@ export default class Media extends View {
         const h = Math.round(size.height / zoom);
         if (w === Math.round(this.width) && h === Math.round(this.height)) return;
         const before = this.wantsBars();
+    this.wantsArt(Math.round(Math.max(bandOf(w, h).width, h) * zoom), cx);
         this.width = w;
         this.height = h;
         // A width change is the only moment the answer can flip, so the beat goes out at once

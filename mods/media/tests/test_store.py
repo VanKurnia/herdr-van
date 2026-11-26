@@ -81,6 +81,22 @@ class StoreTest(unittest.TestCase):
         covers = [n for n in os.listdir(self.dir) if re.match(r"^cover-.*\.png$", n)]
         self.assertEqual(len(covers), 1)
 
+    def test_cover_is_encoded_at_the_size_the_row_draws(self):
+        with open(os.path.join(self.dir, "art.json"), "w", encoding="utf-8") as fh:
+            json.dump({"px": 96}, fh)
+        png = b"\x89PNG-sized"
+        path = self.writer.take_cover(png)
+        self.assertRegex(path, r"^data/media/cover-[0-9a-f]{8}-96\.png$")
+        # The same bytes at the same size write nothing new.
+        self.assertEqual(self.writer.take_cover(png), path)
+        self.assertFalse(self.writer.sync_art())
+        # A new drawn size re-encodes from the bytes already in hand, under a new path.
+        with open(os.path.join(self.dir, "art.json"), "w", encoding="utf-8") as fh:
+            json.dump({"px": 128}, fh)
+        self.assertTrue(self.writer.sync_art())
+        self.assertRegex(self.writer.cover, r"^data/media/cover-[0-9a-f]{8}-128\.png$")
+        self.assertFalse(self.writer.sync_art())
+
     def test_save_cover_none(self):
         self.assertIsNone(self.writer.save_cover(None))
     def test_a_new_track_reopens_the_art_window(self):
