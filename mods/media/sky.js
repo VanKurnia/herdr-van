@@ -53,6 +53,7 @@ export class Sky {
     this.sparks = Array.from({ length: POOL }, (_, k) => ({ k, state: "idle" }));
     this.usual = {}; // each voice's recent level, so a hit reads as a rise rather than loudness
     this.quietAt = {}; // the earliest time each voice may throw again
+    this.track = null; // the track the baselines belong to
     this.pulse = 0; // the beat swell, 1 on a hit and fading
     this.beat = 500; // the bass's own interval, folded in over a few hits
     this.lastBass = 0;
@@ -78,13 +79,23 @@ export class Sky {
 
   // Called on every new level reading (12.5 Hz): how tall the columns are, where the caps are, and
   // what to throw.
-  read(levels, playing, { width, barH, t }) {
+  read(levels, playing, { width, barH, t, key = null }) {
     const live = playing && levels.length > 1;
+    // A new track is measured from scratch: the voices' baselines are that song's, not the last one's.
+    if (key !== this.track) {
+      this.track = key;
+      this.usual = {};
+      this.quietAt = {};
+    }
     this.measure(levels, { width, barH }, live);
     if (!live) {
       for (const s of this.sparks) s.state = "idle";
       this.caps = new Array(this.cols).fill(0);
       this.flash = new Array(this.cols).fill(0);
+      // The voices' own baselines go too: kept across a pause, the first reading after it is measured
+      // against a level from another song and throws a burst nothing played.
+      this.usual = {};
+      this.quietAt = {};
       return;
     }
 

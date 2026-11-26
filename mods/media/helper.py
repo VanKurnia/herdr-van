@@ -31,7 +31,17 @@ from winrt.windows.media.control import (  # noqa: E402
     GlobalSystemMediaTransportControlsSessionManager as SessionManager,
 )
 from winrt.windows.storage.streams import Buffer, InputStreamOptions  # noqa: E402
-from levels import BAND_RANGES, BANDS, BLOCK, LOUDNESS, RATE, level, release  # noqa: E402
+from levels import (  # noqa: E402
+    BAND_RANGES,
+    BANDS,
+    BLOCK,
+    LOUDNESS,
+    RATE,
+    VOICE_BINS,
+    level,
+    release,
+    voice_activity,
+)
 from store import Writer  # noqa: E402
 
 POLL_S = 1.0
@@ -115,6 +125,8 @@ def audio_loop(writer):
 
     window = np.hanning(BLOCK).astype(np.float32)
     levels = [0.0] * BANDS
+    voice_hist = []  # the vocal band's recent levels, for the syllabic cue
+    score_hist = []  # the recent voice scores, for the median outlier filter
     last = time.monotonic()
 
     while not writer.stopping():
@@ -146,7 +158,17 @@ def audio_loop(writer):
                     spec = np.abs(np.fft.rfft(mono * window))
                     fresh = [level(float(spec[a:b].max()) / LOUDNESS) for a, b in BAND_RANGES]
                     levels = release(fresh, levels, dt)
-                    writer.publish_levels([round(v, 2) for v in levels])
+                    # Spectral flatness over the voice's own bins: low for anything pitched, high for
+                    # noise and cymbals. Cheap here, and it is the one cue the band levels cannot give.
+                    power = spec[VOICE_BINS[0] : VOICE_BINS[1]] ** 2 + 1e-12
+                    flatness = float(np.exp(np.mean(np.log(power))) / np.mean(power))
+                    score = voice_activity(levels, voice_hist, flatness, RATE / BLOCK)
+                    # The outlier filter the literature uses: a median over a handful of frames, so a
+                    # single loud consonant does not read as a change of section.
+                    score_hist.append(score)
+                    del score_hist[:-5]
+                    voice = float(np.median(score_hist))
+                    writer.publish_levels([round(v, 2) for v in levels], voice)
         except Exception as exc:  # no device yet, or the output device changed
             print("audio failed: %r" % (exc,), file=sys.stderr, flush=True)
             writer.publish_levels([0] * BANDS)

@@ -3,7 +3,7 @@
 import { div, image, svg, PathBuilder, Background } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 
-const ART_OPACITY = 0.66; // the artwork as a tint over the backdrop, which it must not cover
+const ART_OPACITY = 0.42; // the art's floor: with the voice breathing it, 0.5 gain rests near 0.71
 const PAD_X = 8; // the sidebar's own side gutter, so the poster lines up with the lists above it
 const FADE_TOP = "30%"; // where the artwork starts dissolving out
 const TOP_FADE_SHARE = 0.35; // the fade under the top edge, deep enough for two lines of words
@@ -142,6 +142,7 @@ export function row({
   subtitle,
   hint,
   cover,
+  artGain = 0.5,
   levels,
   pos,
   dur,
@@ -199,7 +200,7 @@ export function row({
             .left(Math.round((artW - side) / 2))
             .w(side)
             .h(side)
-            .opacity(ART_OPACITY),
+            .opacity(ART_OPACITY + (1 - ART_OPACITY) * artGain),
         )
         // Downward: nothing at the seam, the backdrop's own tone at the bottom, which is what takes
         // the art to gone without covering the backdrop with a panel.

@@ -21,6 +21,7 @@ import { row, bandOf } from "./ui.js";
 import { Sky } from "./sky.js";
 
 const COMPACT_PX = 160; // below this the row is cover-only: no text, no bars
+const REST_GAIN = 0.5; // the art's weight with no voice to follow: half way between floor and full
 const LEVELS_MS = 80;
 const FRAME_MS = 66; // the sparks' clock; each frame repaints the whole window
 const BEAT_MS = 10000;
@@ -70,6 +71,11 @@ export default class Media extends View {
     this.clockAt = 0;
     this.levelsBody = null;
     this.levels = [];
+    this.voice = 0.5; // the helper's read of whether a singer owns the mix, 0..1
+    this.gain = REST_GAIN; // the art's breath: 0 at its floor, 1 fully opaque, REST_GAIN at rest
+    this.gainAt = 0; // when `gain` last moved, so the attack and release are time-based
+    this.base = null; // the voice level this passage has been at, for the swell to be relative to
+    this.breathKey = null; // the track the breath belongs to: a new one starts from rest
     this.width = 268; // logical px, until the row reports its own size
     this.height = 268;
     this.pid = null;
@@ -296,22 +302,76 @@ export default class Media extends View {
   // Bars only move while a track plays, and only when the bars are on screen: a folded
   // sidebar (< 160 px) does not draw them at all.
   readLevels(cx) {
-    if (this.parked || !this.presenting() || !this.state?.playing || this.width < COMPACT_PX) return;
+    if (!this.active()) {
+      // Nothing is being read, so the art settles back to rest instead of holding the last chorus.
+      const was = this.gain;
+      this.breathe();
+      if (Math.abs(this.gain - was) > 0.002) cx.notify();
+      return;
+    }
     cx.spawn(async (cx) => {
       const body = await readText("levels.json");
       if (body === this.levelsBody) return;
       this.levelsBody = body;
       try {
-        this.levels = JSON.parse(body).l ?? [];
+        const payload = JSON.parse(body);
+        this.levels = payload.l ?? [];
+        this.voice = typeof payload.v === "number" ? payload.v : 0.5;
       } catch {
-        this.levels = [];
+        // Keep the last good reading rather than blanking the skyline: a parse that fails is this
+        // reader's problem, not the absence of sound.
       }
       // Every new reading is also where a hit is heard and thrown.
-      this.sky.read(this.levels, Boolean(this.state?.playing), { ...this.geom(), t: theme() });
+      this.sky.read(this.levels, Boolean(this.state?.playing), {
+        ...this.geom(),
+        t: theme(),
+        key: this.state?.session ?? null,
+      });
+      this.breathe();
       // Only ask for a frame when the sky is still: mid-flight, the frame clock draws within one
       // frame interval anyway, so a second notify per reading repaints the window for nothing.
       if (!this.skyMoving) cx.notify();
     });
+  }
+
+  // Whether the row has sound to draw: playing, on screen, and wide enough to show the bars at all.
+  active() {
+    return !this.parked && this.presenting() && Boolean(this.state?.playing) && this.width >= COMPACT_PX;
+  }
+
+  // The artwork breathes with the voice: an envelope follower over the helper's voice score, fast to
+  // rise and slow to fall — how a game drives a light from an audio level without it strobing with
+  // every syllable. Leaves the art's weight in `this.gain`, 0 at its floor and 1 fully opaque.
+  breathe() {
+    const now = Date.now();
+    const dt = Math.min(250, Math.max(0, now - this.gainAt));
+    this.gainAt = now;
+    // A new track is a new breath: keep the old passage's baseline and the first few seconds of the
+    // next song would be spent chasing a level it never had.
+    const key = this.state?.session ?? null;
+    if (key !== this.breathKey) {
+      this.breathKey = key;
+      this.base = null;
+    }
+    // Held still: nothing playing, folded to the rail, no window. The art settles to its rest weight
+    // rather than freezing wherever the last chorus left it.
+    if (!this.active()) {
+      this.base = null;
+      this.gain += (REST_GAIN - this.gain) * Math.min(1, dt / 600);
+      return;
+    }
+    // The helper's voice score, not the vocal band: a guitar solo in the same octaves must not breathe
+    // the art as if it were singing.
+    const heard = this.voice;
+    // Relative to how loud the voice has been in this passage, not to an absolute number: only a swell
+    // above its own baseline should move the art. A ~3 s average, so it follows a passage, not a word.
+    if (this.base === null) this.base = heard;
+    else this.base += (heard - this.base) * Math.min(1, dt / 3000);
+    const swell = (heard - this.base) / Math.max(0.06, this.base * 0.4);
+    const target = Math.max(0, Math.min(1, REST_GAIN + swell * REST_GAIN));
+    // Fast to rise, slow to fall: the asymmetry is what reads as breathing rather than flicker.
+    const step = Math.min(1, dt / (target > this.gain ? 90 : 700));
+    this.gain += (target - this.gain) * step;
   }
 
   render(_cx) {
@@ -360,6 +420,7 @@ export default class Media extends View {
       subtitle,
       hint,
       cover: this.state?.cover,
+      artGain: this.gain,
       levels: this.levels,
       pos,
       dur: Number(this.state?.dur) || 0,

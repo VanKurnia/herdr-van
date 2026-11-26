@@ -141,8 +141,10 @@ class Writer:
         self.state = body
         self._atomic("state.json", body)
 
-    def publish_levels(self, levels):
-        body = json.dumps({"l": levels}, separators=(",", ":"))
+    def publish_levels(self, levels, voice=0.0):
+        # One shape every time: the mod reads `v` for the art's breath and treating an absent field as
+        # a middle value would make silence breathe.
+        body = json.dumps({"l": levels, "v": round(voice, 2)}, separators=(",", ":"))
         now = time.time()
         if body == self.levels:
             return
