@@ -10,6 +10,7 @@ PROTOCOL_V = 1  # state.json's shape; bump when a field is renamed or removed
 LEVELS_EVERY_S = 0.08  # the spectrum, published at the rate the row reads it
 COMMANDS = {"prev", "toggle", "next"}
 REPLACE_TRIES = 5  # a rename can lose to a reader on Windows; 4 waits of 20 ms ride it out
+COVER_SETTLE_S = 6.0  # how long after a track change the artwork may still be on its way
 
 
 class Writer:
@@ -29,6 +30,9 @@ class Writer:
         self._wanted = True  # whether the mod is drawing the bars
         self.cover = None  # last cover path published for this track
         self.cover_key = None  # the track that path belongs to
+        self.cover_digest = None  # the bytes behind self.cover, so a re-read of the same art writes nothing
+        self.cover_fresh = False  # whether this track has supplied art yet
+        self.cover_settle = 0.0  # monotonic deadline while late art is still worth re-reading
 
     def stopping(self):
         # Written by the mod, never by this process.
@@ -122,6 +126,34 @@ class Writer:
             return
         self.levels, self.levels_at = body, now
         self._atomic("levels.json", body)
+
+    def note_track(self, key, settle_s=COVER_SETTLE_S):
+        """Adopt the track the player reports, and open its window for late art.
+
+        A player publishes the picture a moment after the metadata, and the first read after a
+        change can still hand back the previous track's: so the art stays worth re-reading for a
+        short while, rather than being settled for the whole track off one early read.
+        """
+        if key == self.cover_key:
+            return False
+        self.cover_key = key
+        self.cover_fresh = False
+        self.cover_settle = time.monotonic() + settle_s
+        return True
+
+    def cover_due(self):
+        """Whether the artwork is worth reading now: none yet for this track, or it may still arrive."""
+        return not self.cover_fresh or time.monotonic() < self.cover_settle
+
+    def take_cover(self, data):
+        """Store the bytes the player just handed over; the path changes only when the bytes do."""
+        if data is not None:
+            digest = hashlib.sha1(data).hexdigest()[:8]
+            if digest != self.cover_digest:
+                self.cover_digest = digest
+                self.cover = self.save_cover(data)
+            self.cover_fresh = True
+        return self.cover
 
     def save_cover(self, data):
         """Store cover art under a content-addressed name; None means no art."""

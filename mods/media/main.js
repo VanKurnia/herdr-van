@@ -17,10 +17,12 @@ import { View } from "gpui-kit";
 import { appHome, checking, layout, props, theme, watchFolder } from "herdr";
 import { readText, writeFile } from "./state.js";
 import { backoffMs, startHelper, stopHelper } from "./helper.js";
-import { row } from "./ui.js";
+import { row, bandOf } from "./ui.js";
+import { Sky } from "./sky.js";
 
 const COMPACT_PX = 160; // below this the row is cover-only: no text, no bars
 const LEVELS_MS = 80;
+const FRAME_MS = 33; // the sparks' own clock, while they are flying
 const BEAT_MS = 10000;
 const TICK_STALE_S = 15; // the helper ticks every second
 const LAUNCH_GRACE_MS = 10000; // a fresh helper needs a few seconds to import winrt and tick
@@ -63,9 +65,13 @@ export default class Media extends View {
     // When the body just read was sampled: the player's own position can lag or freeze, so the row
     // counts from here between two bodies.
     this.posAt = 0;
+    // The clock a track with no reported timeline falls back on.
+    this.clockKey = null;
+    this.clockAt = 0;
     this.levelsBody = null;
     this.levels = [];
-    this.width = 268;
+    this.width = 268; // logical px, until the row reports its own size
+    this.height = 268;
     this.pid = null;
     this.expected = { beat: null, cmd: null }; // last body written for each file the mod owns
     this.writing = {}; // one write in flight per file: two clicks must not race on one expectation
@@ -75,19 +81,29 @@ export default class Media extends View {
     this.launchFailures = 0;
     this.why = null; // why the helper is not answering: a launcher reason, or no answer at all
     this.parked = false;
+    // What moves above the columns — sparks, peak caps, landings — has to outlive a render, so it
+    // lives here rather than in ui.js.
+    this.sky = new Sky();
     if (checking()) return;
     this.parked = this.hidden();
     if (!this.parked) this.spawnHelper(cx);
     this.read(cx); // a reload starts on an empty payload; a settled track writes nothing
     cx.timer.every(5000, (cx) => this.alive(cx));
     cx.timer.every(LEVELS_MS, (cx) => this.readLevels(cx));
+    // Sparks and caps move at ~30 fps, but only while something is in flight: a still skyline costs
+    // nothing. Nothing is handed to `.transition()` any more — this build does not tween it.
+    cx.timer.every(FRAME_MS, (cx) => {
+      if (this.sky.frame()) cx.notify();
+    });
     cx.timer.every(BEAT_MS, (cx) => this.beat(cx));
     // Parking follows the layout, and a hidden copy keeps its timers: this tick is what
     // starts the helper again once the row is shown. A playing track also needs a redraw a
     // second for the clock, which no file event provides.
     cx.timer.every(1000, (cx) => {
       this.syncParked(cx);
-      if (this.state?.playing && this.state?.dur > 0) cx.notify();
+      // A playing track needs a redraw a second for its clock, whether the player reports a length
+      // or the row is counting one itself.
+      if (this.state?.playing) cx.notify();
     });
     // state.json and a new cover are the only reasons to re-read the payload: levels.json,
     // tick, beat, cmd and helper.lock arrive in the same batches. Watch paths are absolute
@@ -198,6 +214,14 @@ export default class Media extends View {
         this.state = null;
       }
       this.posAt = Date.now();
+      // A player that reports no timeline (streams often do: pos 0, dur 0) still needs a clock, so
+      // the row counts from the moment this track first appeared. A player that does report one
+      // keeps its own position, corrected for the lag since this body was read.
+      const key = `${this.state?.title ?? ""}\u0000${this.state?.artist ?? ""}`;
+      if (key !== this.clockKey) {
+        this.clockKey = key;
+        this.clockAt = this.posAt;
+      }
       cx.notify();
     });
   }
@@ -239,6 +263,11 @@ export default class Media extends View {
     });
   }
 
+  // The band the skyline draws in, in px: the same numbers ui.js lays its own box out from.
+  geom() {
+    return bandOf(this.width, this.height);
+  }
+
   // Bars only move while a track plays, and only when the bars are on screen: a folded
   // sidebar (< 160 px) does not draw them at all.
   readLevels(cx) {
@@ -252,6 +281,8 @@ export default class Media extends View {
       } catch {
         this.levels = [];
       }
+      // Every new reading is also where a hit is heard and thrown.
+      this.sky.read(this.levels, Boolean(this.state?.playing), { ...this.geom(), t: theme() });
       cx.notify();
     });
   }
@@ -279,13 +310,22 @@ export default class Media extends View {
     // Only the dependency case has an action worth carrying; the other two are already sentences.
     const hint = offline && this.why === "no-deps" ? PIP : "";
 
+    // A player that reports a position gets the row's own clock correction; one that reports none
+    // (streams often send 0 for both) gets the time since this track appeared.
+    const reported = Number(this.state?.pos) || 0;
+    const pos =
+      reported > 0
+        ? elapsedPos(reported, playing ? Date.now() - this.posAt : 0)
+        : playing && this.clockAt
+          ? (Date.now() - this.clockAt) / 1000
+          : 0;
+
     // Buttons the helper would ignore are worse than none: an outdated payload has its own
     // sentence in the row instead.
     const transport = session && !offline && !stale;
 
     return row({
       t,
-      compact: this.width < COMPACT_PX,
       offline,
       playing,
       session,
@@ -294,10 +334,13 @@ export default class Media extends View {
       hint,
       cover: this.state?.cover,
       levels: this.levels,
-      pos: elapsedPos(Number(this.state?.pos) || 0, playing ? Date.now() - this.posAt : 0),
+      pos,
       dur: Number(this.state?.dur) || 0,
       transport,
       hovered: this.hovered,
+      width: this.width,
+      height: this.height,
+      sky: this.sky,
       onPrev: (cx) => this.send("prev", cx),
       onToggle: (cx) => this.send("toggle", cx),
       onNext: (cx) => this.send("next", cx),
@@ -306,10 +349,13 @@ export default class Media extends View {
         this.hovered = on;
         cx.notify();
       },
-      onWidth: (size, cx) => {
-        if (Math.round(size.width) === Math.round(this.width)) return;
+      onSize: (size, cx) => {
+        const w = Math.round(size.width);
+        const h = Math.round(size.height);
+        if (w === Math.round(this.width) && h === Math.round(this.height)) return;
         const before = this.wantsBars();
-        this.width = size.width;
+        this.width = w;
+        this.height = h;
         // A width change is the only moment the answer can flip, so the beat goes out at once
         // rather than up to a beat late.
         if (this.wantsBars() !== before) this.beat(cx);

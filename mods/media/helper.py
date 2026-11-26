@@ -71,18 +71,19 @@ async def sample(writer, manager):
     status = PLAYBACK.get(int(session.get_playback_info().playback_status), "unknown")
     timeline = session.get_timeline_properties()
     writer.playing = status == "playing"
-    # The artwork stream is only worth opening when the track changed, or when this track has no
-    # art yet (players publish the picture a moment after the metadata, so keep trying while it
-    # is missing). Reading and hashing it on every poll cost a stream read and a sha1 per second.
+    # The artwork is only worth opening while the track changed, has no art yet, or is still inside
+    # the short window after a change in which the player hands over a late picture. Reading and
+    # hashing it on every poll cost a stream read and a sha1 per second, and identical bytes write
+    # nothing, so the window costs a handful of reads per track.
     key = (
         (props.title or "").strip(),
         (props.artist or "").strip(),
         (props.album_title or "").strip(),
         session.source_app_user_model_id,
     )
-    if key != writer.cover_key or writer.cover is None:
-        writer.cover = writer.save_cover(await read_thumbnail(props.thumbnail))
-        writer.cover_key = key
+    writer.note_track(key)
+    if writer.cover_due():
+        writer.take_cover(await read_thumbnail(props.thumbnail))
     writer.publish(
         {
             "session": True,

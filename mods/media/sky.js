@@ -1,0 +1,344 @@
+// The skyline and what moves over it, after the afterhours layout's equaliser: a dot matrix whose
+// columns follow the bands (low on the left, high on the right, in this mod's own tones), a dim cap
+// that marks each column's recent peak and sinks, and dots thrown off the skyline when the music
+// hits.
+//
+// The motion is computed here, frame by frame, rather than handed to `.transition()`: in this build
+// a transition does not tween — an element given a new position appears there — so every position
+// below is a function of the clock, and the row is redrawn at ~30 fps only while something is in
+// flight.
+import { div, PathBuilder, Background } from "gpui-kit";
+import { palette, blend } from "./ui.js";
+
+const DOT = 3; // a pixel
+const PITCH_X = 6; // column pitch
+const PITCH_Y = 6; // row pitch
+const BASE = 10; // the skyline stands this far above the band's bottom edge
+const POOL = 14; // sparks in flight at once, two dots each
+const TAIL_MS = 55; // how far a spark's trail follows behind it
+const LAND_MS = 150; // how long the dot that lands lingers before it goes
+const CAP_SINK = 0.5; // px a peak cap falls per 80 ms
+const LIFT = 0.7; // the curve the level is raised by, so a column is as tall as it looks in the mix
+const SWELL = 0.22; // how much the beat swells the whole skyline
+
+// The bands each voice listens to, its floor (our levels are 0..1), how much of a rise counts as a
+// hit, how many sparks a hit throws and how far they rise. Our helper smooths each band before
+// publishing it, so a hit is a modest rise over the usual level (about 10 %), not the 35 %
+// afterhours can look for on raw levels.
+const VOICES = [
+  { key: "bass", from: 1, to: 7, floor: 0.35, ratio: 1.09, jump: 0.05, quiet: 300, count: 5, reach: 2 },
+  { key: "mid", from: 10, to: 17, floor: 0.3, ratio: 1.05, jump: 0.03, quiet: 380, count: 3, reach: 3 },
+  { key: "treble", from: 19, to: 26, floor: 0.2, ratio: 1.07, jump: 0.03, quiet: 380, count: 2, reach: 4 },
+];
+
+// A column's pixel height for a number of dots: the gaps between rows are real space, and they are
+// what make the columns a matrix rather than a bar.
+const heightOf = (dots) => dots * PITCH_Y - (PITCH_Y - DOT);
+
+// A hop slows into its apex and speeds up out of it, which is what draws an arc rather than a
+// triangle.
+const easeOut = (p) => 1 - (1 - p) * (1 - p);
+const easeIn = (p) => p * p;
+const clamp01 = (v) => Math.min(1, Math.max(0, v));
+const pick = (list) => list[Math.floor(Math.random() * list.length)];
+
+export class Sky {
+  constructor() {
+    this.cols = 0;
+    this.used = []; // dots per column, the one reading the columns, the caps and the sparks share
+    this.caps = []; // px height of each column's recent peak
+    this.flash = []; // per column: 1 just after a spark lands there, fading
+    this.sparks = Array.from({ length: POOL }, (_, k) => ({ k, state: "idle" }));
+    this.usual = {}; // each voice's recent level, so a hit reads as a rise rather than loudness
+    this.quietAt = {}; // the earliest time each voice may throw again
+    this.pulse = 0; // the beat swell, 1 on a hit and fading
+    this.beat = 500; // the bass's own interval, folded in over a few hits
+    this.lastBass = 0;
+  }
+
+  // How many dots each column stands for. One reading feeds everything: the columns draw from it,
+  // the caps sink to it and the sparks leave from its top.
+  measure(levels, { width, barH }, live) {
+    const n = levels.length;
+    const cols = Math.max(8, Math.floor(width / PITCH_X));
+    const rows = Math.max(2, Math.min(12, Math.floor((barH - BASE - PITCH_Y - 4) / PITCH_Y)));
+    this.cols = cols;
+    this.used = Array.from({ length: cols }, (_, c) => {
+      if (!live) return 1;
+      const p = (c / (cols - 1)) * (n - 1);
+      const i = Math.floor(p);
+      const a = levels[i] ?? 0;
+      const b = levels[Math.min(n - 1, i + 1)] ?? a;
+      const level = clamp01(a + (b - a) * (p - i)) ** LIFT * (1 + SWELL * this.pulse);
+      return Math.max(1, Math.round(clamp01(level) * rows));
+    });
+  }
+
+  // Called on every new level reading (12.5 Hz): how tall the columns are, where the caps are, and
+  // what to throw.
+  read(levels, playing, { width, barH, t }) {
+    const live = playing && levels.length > 1;
+    this.measure(levels, { width, barH }, live);
+    if (!live) {
+      for (const s of this.sparks) s.state = "idle";
+      this.caps = new Array(this.cols).fill(0);
+      this.flash = new Array(this.cols).fill(0);
+      return;
+    }
+
+    const now = Date.now();
+    if (this.caps.length !== this.cols) {
+      this.caps = new Array(this.cols).fill(0);
+      this.flash = new Array(this.cols).fill(0);
+    }
+    for (let c = 0; c < this.cols; c++) {
+      this.caps[c] = Math.max(heightOf(this.used[c]), this.caps[c]);
+    }
+
+    const n = levels.length;
+    for (const voice of VOICES) {
+      let sum = 0;
+      for (let b = voice.from; b <= voice.to; b++) sum += levels[b] ?? 0;
+      const value = sum / (voice.to - voice.from + 1);
+      const usual = this.usual[voice.key] ?? value;
+      this.usual[voice.key] = usual + (value - usual) * 0.12;
+      if (this.quietAt[voice.key] > now) continue;
+      // A hit is a rise over what this voice has been doing, by ratio or by a small absolute step:
+      // loud steady passages throw nothing, and the ratio alone misses quiet voices in a dense mix.
+      const risen = value >= usual * voice.ratio || value - usual >= voice.jump;
+      if (value < voice.floor || !risen) continue;
+      this.quietAt[voice.key] = now + voice.quiet;
+      if (voice.key === "bass") {
+        this.pulse = 1;
+        if (this.lastBass && now - this.lastBass > 240 && now - this.lastBass < 1400) {
+          this.beat = this.beat * 0.7 + (now - this.lastBass) * 0.3;
+        }
+        this.lastBass = now;
+      }
+      // The burst leaves together, spread over a few milliseconds so it reads as a splash rather
+      // than one dot at a time.
+      for (let k = 0; k < voice.count; k++) {
+        this.spawn(voice, levels, { barH }, now + k * 18, t);
+      }
+    }
+  }
+
+  // Called ~30 times a second: ages the caps, the flashes and the sparks, and reports whether
+  // anything is still in flight so the caller knows to redraw.
+  frame() {
+    const now = Date.now();
+    let moving = false;
+    if (this.pulse > 0) {
+      this.pulse = Math.max(0, this.pulse - 0.055);
+      moving = true;
+    }
+    for (let c = 0; c < this.caps.length; c++) {
+      const floor = heightOf(this.used[c] ?? 1);
+      if (this.caps[c] > floor) {
+        this.caps[c] = Math.max(floor, this.caps[c] - CAP_SINK);
+        moving = true;
+      }
+      if (this.flash[c] > 0) {
+        this.flash[c] = Math.max(0, this.flash[c] - 0.09);
+        moving = true;
+      }
+    }
+    for (const s of this.sparks) {
+      if (s.state === "idle") continue;
+      const age = now - s.startAt;
+      if (age > 2 * s.hop + LAND_MS) {
+        s.state = "idle";
+        continue;
+      }
+      if (s.state !== "lit" && age > 2 * s.hop) {
+        s.state = "lit";
+        this.flash[s.landCol] = 1;
+      }
+      moving = true;
+    }
+    return moving;
+  }
+
+  // Where a spark is now: up the arc, down the other side, or resting where it landed.
+  pos(s, now) {
+    const up = clamp01((now - s.startAt) / s.hop);
+    if (up < 1) {
+      return { x: s.x0 + (s.mx - s.x0) * up, y: s.y0 + (s.my - s.y0) * easeOut(up), rising: true };
+    }
+    const down = clamp01((now - s.startAt - s.hop) / s.hop);
+    return { x: s.mx + (s.x1 - s.mx) * down, y: s.my + (s.y1 - s.my) * easeIn(down), rising: false };
+  }
+
+  // A spark leaves the top of a column in the voice's range, arcs up and across, and comes down on
+  // another column, so the tops of the arcs trace the shape of the skyline.
+  spawn(voice, levels, { barH }, at, t) {
+    const s = this.sparks.find((p) => p.state === "idle");
+    if (!s) return;
+    const n = levels.length;
+    const band = voice.from + Math.random() * (voice.to - voice.from);
+    const columnOf = (b) => Math.round((b / (n - 1)) * (this.cols - 1));
+    const from = columnOf(band);
+    const to = Math.min(this.cols - 1, Math.max(0, from + pick([-3, -2, -1, 1, 2, 3])));
+    s.state = "up";
+    s.startAt = at;
+    s.hop = Math.max(150, Math.min(320, this.beat / 2)); // half a beat, once the bass has told us
+    s.landCol = to;
+    s.x0 = from * PITCH_X;
+    s.y0 = barH - BASE - heightOf(this.used[from]);
+    // The apex sits between the two columns, one to `reach` rows above the taller of them, and never
+    // at the very top of the band: the burst would just smear along that edge.
+    s.mx = Math.round(((from + to) / 2) * PITCH_X);
+    s.my = Math.max(
+      PITCH_Y,
+      Math.min(s.y0, barH - BASE - heightOf(this.used[to])) - (1 + Math.round(Math.random() * voice.reach)) * PITCH_Y,
+    );
+    s.x1 = to * PITCH_X;
+    s.y1 = barH - BASE - heightOf(this.used[to]);
+    s.color = palette(n, t)(band);
+    s.bright = blend(s.color, "#ffffff", 0.35); // the newest event is the brightest thing on screen
+  }
+
+  // The whole skyline: the columns, their lit tips, the caps, the landing flashes and the sparks.
+  el(t, { width, barH, levels, playing, offline }) {
+    const n = levels.length;
+    // Before any reading the bands are unknown: a dim dotted baseline, which is what a check renders.
+    if (n < 2) {
+      const cols = Math.max(8, Math.floor(width / PITCH_X));
+      return div()
+        .id("spectrum")
+        .relative()
+        .size_full()
+        .children(
+          Array.from({ length: cols }, (_, c) =>
+            div()
+              .id(`base-${c}`)
+              .absolute()
+              .left(c * PITCH_X)
+              .bottom(BASE)
+              .w(DOT)
+              .h(DOT)
+              .bg(t.border)
+              .opacity(0.5),
+          ),
+        );
+    }
+
+    const live = playing && !offline;
+    const cols = this.cols;
+    const paint = globalThis.window;
+    const tone = palette(n, t);
+    const out = [];
+    for (let c = 0; c < cols; c++) {
+      // The dissolve toward both ends.
+      const away = Math.abs(c - (cols - 1) / 2) / ((cols - 1) / 2);
+      const edge = 1 - 0.45 * away * away;
+      const dots = this.used[c] ?? 1;
+      const h = heightOf(dots);
+      const color = tone(c / (cols - 1) * (n - 1));
+      // A gradient needs a plain #rrggbb to hang its alpha on.
+      const shade = /^#[0-9a-fA-F]{6}$/.test(color) ? color : "#ffffff";
+      const matrix = PathBuilder.fill();
+      for (let r = 0; r < dots; r++) {
+        const y = r * PITCH_Y;
+        matrix.add_polygon([[0, y], [DOT, y], [DOT, y + DOT], [0, y + DOT]], true);
+      }
+      out.push(
+        paint
+          // Full strength on the top dot, nothing at the baseline; the gradient runs down the
+          // column's box, so every dot in it is a step of that fade.
+          .paint_path(matrix.build(), Background.linear_gradient(180, shade, `${shade}00`))
+          .id(`col-${c}`)
+          .absolute()
+          .left(c * PITCH_X)
+          .bottom(BASE)
+          .w(DOT)
+          .h(h)
+          .opacity((live ? 1 : 0.3) * edge),
+      );
+      // A lighter pixel caps a column with more than one, so the outline reads as a lit edge.
+      if (live && dots > 1) {
+        out.push(
+          div()
+            .id(`tip-${c}`)
+            .absolute()
+            .left(c * PITCH_X)
+            .bottom(BASE + h - DOT)
+            .w(DOT)
+            .h(DOT)
+            .bg(blend(color, "#ffffff", 0.3))
+            .opacity(0.95 * edge),
+        );
+      }
+      if (!live) continue;
+      const cap = this.caps[c] ?? 0;
+      if (cap > h + 4) {
+        out.push(
+          div()
+            .id(`cap-${c}`)
+            .absolute()
+            .left(c * PITCH_X)
+            .top(barH - BASE - cap - PITCH_Y)
+            .w(DOT)
+            .h(DOT)
+            .bg(t.border)
+            .opacity(0.55 * edge),
+        );
+      }
+      const flash = this.flash[c] ?? 0;
+      if (flash > 0.05) {
+        out.push(
+          div()
+            .id(`flash-${c}`)
+            .absolute()
+            .left(c * PITCH_X)
+            .top(barH - BASE - h)
+            .w(DOT)
+            .h(DOT)
+            .bg(t.foreground)
+            .opacity(0.8 * flash * edge),
+        );
+      }
+    }
+
+    const now = Date.now();
+    for (const s of this.sparks) {
+      if (!live || s.state === "idle" || now < s.startAt) continue;
+      const p = this.pos(s, now);
+      // `lit` is the landing marker the frame sets, so the flash fires once however often we draw.
+      const landed = s.state === "lit";
+      const fade = landed ? Math.max(0, 1 - (now - s.startAt - 2 * s.hop) / LAND_MS) : 1;
+      const alpha = (p.rising ? 0.95 : 0.6) * fade;
+      // A trail: the same path a moment behind, only while the spark is still climbing.
+      if (p.rising && now - s.startAt > TAIL_MS) {
+        const q = this.pos(s, now - TAIL_MS);
+        out.push(
+          div()
+            .id(`trail-${s.k}`)
+            .absolute()
+            .left(Math.round(q.x))
+            .top(Math.round(q.y))
+            .w(DOT)
+            .h(DOT)
+            .bg(s.bright)
+            .opacity(alpha * 0.35),
+        );
+      }
+      out.push(
+        div()
+          .id(`spark-${s.k}`)
+          .absolute()
+          .left(Math.round(p.x))
+          .top(Math.round(p.y))
+          .w(DOT)
+          .h(DOT)
+          .bg(p.rising ? s.bright : s.color)
+          .opacity(alpha),
+      );
+    }
+
+    const band = div().id("spectrum").relative().size_full().children(out);
+    // A paused skyline settles to a dim baseline that breathes on its own: one loop on the
+    // container, not one per pixel, and no redraws for it.
+    return live ? band : band.loop("opacity", { from: 0.45, to: 0.8, period: 3600 });
+  }
+}
