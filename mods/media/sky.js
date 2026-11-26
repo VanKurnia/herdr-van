@@ -10,9 +10,9 @@ import { div, PathBuilder, Background } from "gpui-kit";
 import { h_flex } from "gpui-base";
 import { palette, blend } from "./ui.js";
 
-const DOT = 3; // a pixel
+const DOT = 4; // px: even, so a mark's centre lands on a whole pixel and no column is half-lit
 const GUTTER = 4; // half the row's 8 px gutter: `justify_between` adds its share beside each spacer
-const PITCH_X = 6; // column pitch
+const PITCH_X = 6; // column pitch: even with DOT, so every mark covers whole pixels
 const PITCH_Y = 6; // row pitch
 const BASE = 10; // the skyline stands this far above the band's bottom edge
 const POOL = 14; // sparks in flight at once, two dots each

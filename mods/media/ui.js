@@ -3,14 +3,14 @@
 import { div, image, svg, PathBuilder, Background } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 
-const ART_OPACITY = 0.25; // the artwork as a tint over the backdrop, which it must not cover
+const ART_OPACITY = 0.66; // the artwork as a tint over the backdrop, which it must not cover
 const PAD_X = 8; // the sidebar's own side gutter, so the poster lines up with the lists above it
-const FADE_TOP = "33%"; // where the artwork starts dissolving out
-const TOP_FADE_SHARE = 0.28; // the fade under the top edge, deep enough for two lines of words
+const FADE_TOP = "30%"; // where the artwork starts dissolving out
+const TOP_FADE_SHARE = 0.35; // the fade under the top edge, deep enough for two lines of words
 // The fades paint the tone of the backdrop the row stands on, not a panel colour: this build has no
 // mask, so a fade that is both smooth and free of a slab has to end in that tone.
 const SCRIM = "#0a0a19";
-const GRAPH_SHARE = 0.375; // the skyline's band: this much of the poster's height, at its foot
+const GRAPH_SHARE = 0.3; // the skyline's band: this much of the poster's height, at its foot
 const GRAPH_TOP = `${((1 - GRAPH_SHARE) * 100).toFixed(1)}%`; // where that band starts
 
 // The skyline's box: inside the poster's side gutter, at its foot. The row lays out from these
@@ -42,16 +42,15 @@ function fullRect() {
 // stands for and keeps its place if the band count changes.
 const LOW_HZ = 40;
 const HIGH_HZ = 16000;
-const BAND_STOPS = [
-  { upTo: 60, color: "ansi5" }, // sub-bass: the deepest hue
-  { upTo: 250, color: "ansi1" }, // bass: warm and heavy
-  { upTo: 2000, color: "ansi2" }, // vocal: the middle, where the voice sits
-  { upTo: Infinity, color: "ansi6" }, // treble: air and cymbals
-];
-
+// Four registers of one hue, held as one continuous ramp rather than four flat zones: the theme's
+// accent taken down toward the backdrop at the bass and up toward white at the air. A zone that is
+// one colour leaves a visible step at its edge and makes neighbouring columns identical, which is
+// what reads as rigid; a ramp changes a little every column and stays the same colour scheme.
 function bandColor(index, count, t) {
-  const hz = LOW_HZ * (HIGH_HZ / LOW_HZ) ** ((index + 0.5) / count);
-  return t[BAND_STOPS.find((band) => hz < band.upTo).color];
+  const k = count <= 1 ? 0 : index / (count - 1);
+  const deep = blend(t.accent, t.background, 0.28);
+  const lift = blend(t.accent, "#ffffff", 0.42);
+  return k < 0.5 ? blend(deep, t.accent, k / 0.5) : blend(t.accent, lift, (k - 0.5) / 0.5);
 }
 
 // A blend of two theme colours for the seams between the zones, in polar OKLCH: hue takes the short
@@ -224,6 +223,18 @@ export function row({
             .left(0)
             .right(0)
             .h(height * TOP_FADE_SHARE),
+        )
+        // Under the skyline the art steps back so the dots and their colours are what the eye reads.
+        // One ramp, not a slab: it starts at nothing exactly where the band starts, so there is no
+        // edge to see, and arrives just short of solid at the foot.
+        .child(
+          paint
+            .paint_path(fullRect(), Background.linear_gradient(180, `${SCRIM}00`, `${SCRIM}f0`))
+            .absolute()
+            .top(GRAPH_TOP)
+            .left(0)
+            .right(0)
+            .bottom(0),
         ),
     );
 
@@ -271,8 +282,9 @@ export function row({
               .max_w_full()
               .overflow_x_hidden()
               .truncate()
-              .text_size(10)
-              .text_color(t.muted)
+              .text_size(10.5)
+              .text_color(t.foreground)
+              .opacity(0.8)
               .child(subtitle),
           ),
         ),
