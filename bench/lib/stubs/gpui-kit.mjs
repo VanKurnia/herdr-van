@@ -39,9 +39,22 @@ export const list = (items, fn) => {
   return el;
 };
 
-// Paths are geometry: they add no element to the tree.
+// Paths are geometry: they add no element to the tree. The element that carries one does count,
+// so a mod that draws its own geometry through the gpui window is measured like any other.
+export const paintPath = () => element("path");
+
 export class PathBuilder {
-  constructor() { return new Proxy(this, { get: () => () => this }); }
+  constructor() {
+    // Every method chains back to the same proxy: `fill().add_polygon().build()` is one builder.
+    // Returning the raw instance would break at the second call.
+    const proxy = new Proxy(this, { get: (_target, prop) => (prop === "then" ? undefined : () => proxy) });
+    return proxy;
+  }
+
+  // The statics the mods use: a filled path and a stroked one. Each returns a builder whose every
+  // method (move_to, line_to, build) chains back to it, which is all a bench needs.
+  static fill() { return new PathBuilder(); }
+  static stroke(_width) { return new PathBuilder(); }
 }
 export const Background = { linear_gradient: () => ({}) };
 
