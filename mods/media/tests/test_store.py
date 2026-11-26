@@ -83,6 +83,30 @@ class StoreTest(unittest.TestCase):
 
     def test_save_cover_none(self):
         self.assertIsNone(self.writer.save_cover(None))
+    def test_a_new_track_reopens_the_art_window(self):
+        self.assertTrue(self.writer.note_track(("Burn", "Ellie Goulding", "", "app")))
+        self.assertFalse(self.writer.note_track(("Burn", "Ellie Goulding", "", "app")))
+        self.assertTrue(self.writer.note_track(("Motion", "Calvin Harris", "", "app")))
+
+    def test_art_is_read_until_the_window_closes(self):
+        self.writer.note_track(("Burn", "Ellie Goulding", "", "app"), settle_s=60)
+        self.assertTrue(self.writer.cover_due(), "a track with no art yet must be read")
+        self.writer.take_cover(b"\x89PNG-early")
+        self.assertTrue(self.writer.cover_due(), "the picture can arrive after the metadata")
+        self.writer.note_track(("Next", "Artist", "", "app"), settle_s=0)
+        self.assertTrue(self.writer.cover_due(), "a change reads at once however the window closed")
+        self.writer.take_cover(b"\x89PNG-next")
+        self.assertFalse(self.writer.cover_due(), "a closed window stops the reads")
+
+    def test_late_art_replaces_the_early_read(self):
+        self.writer.note_track(("Burn", "Ellie Goulding", "", "app"), settle_s=60)
+        stale = self.writer.take_cover(b"\x89PNG-previous-track")
+        again = self.writer.take_cover(b"\x89PNG-previous-track")
+        self.assertEqual(stale, again, "the same bytes keep the same path, and write nothing")
+        late = self.writer.take_cover(b"\x89PNG-this-track")
+        self.assertNotEqual(stale, late, "the picture that arrives late wins")
+        self.assertTrue(os.path.exists(os.path.join(self.dir, os.path.basename(late))))
+        self.assertEqual(len([f for f in os.listdir(self.dir) if f.startswith("cover-")]), 1)
 
     def test_a_lost_rename_is_retried(self):
         # The mod reading `tick` while it is replaced is a sharing violation on Windows. Losing the

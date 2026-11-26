@@ -1,17 +1,45 @@
-// The row itself: a cover, two lines of text, the spectrum, and the transport. Nothing here reads a
+// The row itself: a cover, two lines of text, the skyline, and the transport. Nothing here reads a
 // file, runs a process or keeps state: it is handed the values and draws them.
 import { div, image, svg, PathBuilder, Background } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 
-const COVER_PX = 46;
-const BARS_H = 33;
-const STROKE = 1.6;
-// How many bands either side of a colour seam the two zones blend across.
-const FADE = 2;
+const ART_OPACITY = 0.25; // the artwork as a tint over the backdrop, which it must not cover
+const PAD_X = 8; // the sidebar's own side gutter, so the poster lines up with the lists above it
+const FADE_TOP = "33%"; // where the artwork starts dissolving out
+const TOP_FADE_SHARE = 0.28; // the fade under the top edge, deep enough for two lines of words
+// The fades paint the tone of the backdrop the row stands on, not a panel colour: this build has no
+// mask, so a fade that is both smooth and free of a slab has to end in that tone.
+const SCRIM = "#0a0a19";
+const GRAPH_SHARE = 0.375; // the skyline's band: this much of the poster's height, at its foot
+const GRAPH_TOP = `${((1 - GRAPH_SHARE) * 100).toFixed(1)}%`; // where that band starts
+
+// The skyline's box: inside the poster's side gutter, at its foot. The row lays out from these
+// numbers and the skyline draws from the same ones.
+export const bandOf = (width, height) => ({
+  width: Math.max(0, width - PAD_X * 2),
+  barH: height * GRAPH_SHARE,
+});
+
 const ICONS = "mods/media/icons/";
 
-// The bars are log-spaced over this range (levels.py), so a bar's band follows the
-// frequency it stands for and keeps its place if the bar count changes.
+// A filled rect over whatever box it is given: the fades are painted paths, not a background with
+// stops, because `Background.stop` percentages are ignored in this build and render flat.
+function fullRect() {
+  return PathBuilder.fill()
+    .add_polygon(
+      [
+        ["0%", "0%"],
+        ["100%", "0%"],
+        ["100%", "100%"],
+        ["0%", "100%"],
+      ],
+      true,
+    )
+    .build();
+}
+
+// The bands are log-spaced over this range (levels.py), so a band's colour follows the frequency it
+// stands for and keeps its place if the band count changes.
 const LOW_HZ = 40;
 const HIGH_HZ = 16000;
 const BAND_STOPS = [
@@ -26,10 +54,10 @@ function bandColor(index, count, t) {
   return t[BAND_STOPS.find((band) => hz < band.upTo).color];
 }
 
-// A blend of two theme colours for the seams between the spectrum's zones, in polar OKLCH: hue
-// takes the short way round the colour circle. Blending channels instead passes through grey —
-// red→green lands on tan at chroma 0.070 where the polar blend lands on amber at 0.149 — so the
-// seams keep the colour the zones are meant to have.
+// A blend of two theme colours for the seams between the zones, in polar OKLCH: hue takes the short
+// way round the colour circle. Blending channels instead passes through grey — red→green lands on
+// tan at chroma 0.070 where the polar blend lands on amber at 0.149 — so the seams keep the colour
+// the zones are meant to have.
 const toLinear = (c) => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
 const toSrgb = (c) =>
   Math.max(0, Math.min(1, c <= 0.0031308 ? 12.92 * c : 1.055 * c ** (1 / 2.4) - 0.055));
@@ -63,7 +91,7 @@ function fromOklab([L, a, b]) {
   ].map(toSrgb);
 }
 
-function blend(from, to, k) {
+export function blend(from, to, k) {
   const a = channels(from);
   const b = channels(to);
   if (!a || !b) return k < 0.5 ? from : to;
@@ -91,112 +119,23 @@ function clock(seconds) {
   return hours ? `${hours}:${String(minutes).padStart(2, "0")}:${rest}` : `${minutes}:${rest}`;
 }
 
-// Nothing until the player reports a length; a length without a position is the whole clock.
+// Nothing until the player reports a timeline or we have counted one: a length alone is the whole
+// clock, a position alone is how long this track has been going.
 function clockText(pos, dur) {
-  if (!(dur > 0)) return "";
+  if (!(dur > 0)) return pos > 0 ? clock(pos) : "";
   return pos > 0 ? `${clock(pos)} / ${clock(dur)}` : clock(dur);
 }
 
-// The spectrum is painted, not stacked: a Catmull-Rom curve through the levels, emitted as cubic
-// Bézier segments in percentages of the box, so the renderer anti-aliases a line instead of
-// stair-stepping rectangles. Segment i is stroked in that band's tone and filled down to the
-// baseline, so the hue eases from zone to zone instead of switching at a boundary.
-export function bars(levels, playing, offline, t) {
-  const n = levels.length;
-  if (n < 2) return div().w_full().h(1).bg(t.border);
-  const paint = globalThis.window;
-  const value = (i) => (playing && !offline ? Math.min(1, Math.max(0, levels[i])) : 0) ** 0.7;
-  // Samples sit on the rails, which `justify_between` spreads edge to edge: a band's value and the
-  // hairline that marks its place are the same x, including the outermost two.
-  const x = (i) => (i / (n - 1)) * 100;
-  const y = (i) => 92 - value(i) * 84;
-  const at = (i) => Math.max(0, Math.min(n - 1, i));
-  // One cubic from sample i to i + 1, its control points in whatever vertical scale `f` gives, so
-  // the stroked line and the filled body share the same outline.
-  const segment = (builder, i, f) =>
-    builder.cubic_bezier_to(
-      `${x(i + 1)}%`, `${f(i + 1)}%`,
-      `${x(i) + (x(i + 1) - x(at(i - 1))) / 6}%`, `${f(i) + (f(i + 1) - f(at(i - 1))) / 6}%`,
-      `${x(i + 1) - (x(at(i + 2)) - x(i)) / 6}%`, `${f(i + 1) - (f(at(i + 2)) - f(i)) / 6}%`,
-    );
-
-  // The theme colours the zones are built from, and the seams between them. Each seam is walked
-  // over FADE samples either side, so the line reads as one gradient rather than four blocks.
-  const zones = levels.map((_, i) => bandColor(i, n, t));
-  const seams = zones.flatMap((color, i) => (i > 0 && color !== zones[i - 1] ? [i] : []));
-  const tone = (u) => {
-    for (const seam of seams) {
-      const k = (u - (seam - FADE)) / (2 * FADE);
-      if (k > 0 && k < 1) return blend(zones[seam - 1], zones[seam], k);
-    }
-    return zones[Math.max(0, Math.min(n - 1, Math.round(u)))];
-  };
-
-  // The body fades from the loudest band down to the baseline: the fill box starts there, because
-  // `Background.stop` percentages are not honoured in this build and render flat.
-  const peak = Math.max(0, Math.min(...levels.map((_, i) => y(i))));
-  const span = 100 - peak;
-  const rise = (i) => (span <= 0 ? 0 : ((y(i) - peak) / span) * 100);
-
-  // Bodies before lines: every element spans the row's width and paints only its own band inside
-  // it, so a fill pushed between two strokes would sit over the earlier one.
-  const bodies = [];
-  const lines = [];
-  for (let i = 0; i < n - 1; i++) {
-    const shade = tone(i + 0.5);
-    const color = /^#[0-9a-fA-F]{6}$/.test(shade) ? shade : "#ffffff";
-    if (span > 0) {
-      bodies.push(
-        paint
-          .paint_path(
-            segment(PathBuilder.fill().move_to(`${x(i)}%`, `${rise(i)}%`), i, rise)
-              .line_to(`${x(i + 1)}%`, "100%")
-              .line_to(`${x(i)}%`, "100%")
-              .close()
-              .build(),
-            Background.linear_gradient(180, `${color}99`, `${color}00`),
-          )
-          .absolute()
-          .top((peak / 100) * BARS_H)
-          .left(0)
-          .right(0)
-          .bottom(0),
-      );
-    }
-    lines.push(
-      paint
-        .paint_path(
-          segment(PathBuilder.stroke(STROKE).move_to(`${x(i)}%`, `${y(i)}%`), i, y).build(),
-          color,
-        )
-        .absolute()
-        .top(0)
-        .left(0)
-        .right(0)
-        .bottom(0),
-    );
-  }
-
-  // One hairline per band behind the curve, so a sample's frequency stays readable as it moves.
-  return div()
-    .id("spectrum")
-    .relative()
-    .w_full()
-    .h(BARS_H)
-    .child(
-      h_flex()
-        .w_full()
-        .h_full()
-        .justify_between()
-        .children(levels.map((_, i) => div().w(1).h_full().bg(t.border))),
-    )
-    .children([...bodies, ...lines]);
+// The band tones, as one function of position: each column takes the colour of the register it
+// stands for, so the skyline reads as four zones rather than a continuous rainbow.
+export function palette(n, t) {
+  const zones = Array.from({ length: n }, (_, i) => bandColor(i, n, t));
+  return (u) => zones[Math.max(0, Math.min(n - 1, Math.round(u)))];
 }
 
 // `onWidth` is the size callback's body, so this file never touches the view's cx.
 export function row({
   t,
-  compact,
   offline,
   playing,
   session,
@@ -208,16 +147,18 @@ export function row({
   pos,
   dur,
   transport,
+  hovered,
+  width,
+  height,
+  sky,
   onPrev,
   onToggle,
   onNext,
-  onWidth,
+  onSize,
+  onHover,
 }) {
-  const art = cover
-    ? image(cover).w(COVER_PX).h(COVER_PX).rounded(6).flex_none()
-    : div().w(COVER_PX).h(COVER_PX).rounded(6).flex_none().bg(t.raised);
-
   const time = clockText(pos, dur);
+  const paint = globalThis.window;
 
   // The icon brightens with the row's text colour on hover, so it is set on the button.
   const button = (id, icon, onClick) =>
@@ -235,77 +176,141 @@ export function row({
       .on_click((_event, cx) => onClick(cx))
       .child(svg(ICONS + icon).size(12));
 
-  const text = v_flex()
-    .flex_1()
-    .min_w(0)
-    .gap(2)
+  // Layer 1: the artwork edge to edge as a tint, dissolving out under the top edge where the words
+  // sit and again from the seam down to its foot. Cover fit, done by hand: one square, sized to the
+  // longer side and centred, then clipped. The host has no object-fit, and a stretched square would
+  // show the art squashed.
+  const band = bandOf(width, height);
+  const artW = band.width;
+  const side = Math.max(artW, height);
+  const art = div()
+    .id("media-art")
+    .absolute()
+    .top(0)
+    .left(PAD_X)
+    .bottom(0)
+    .w(artW)
+    .overflow_hidden()
+    .when(Boolean(cover) && side > 0, (el) =>
+      el
+        .child(
+          image(cover)
+            .absolute()
+            .top(Math.round((height - side) / 2))
+            .left(Math.round((artW - side) / 2))
+            .w(side)
+            .h(side)
+            .opacity(ART_OPACITY),
+        )
+        // Downward: nothing at the seam, the backdrop's own tone at the bottom, which is what takes
+        // the art to gone without covering the backdrop with a panel.
+        .child(
+          paint
+            .paint_path(fullRect(), Background.linear_gradient(180, `${SCRIM}00`, SCRIM))
+            .absolute()
+            .top(FADE_TOP)
+            .left(0)
+            .right(0)
+            .bottom(0),
+        )
+        // Upward: the same tone at the top edge so two lines of words sit on it, then empty before a
+        // third of the way down.
+        .child(
+          paint
+            .paint_path(fullRect(), Background.linear_gradient(180, SCRIM, `${SCRIM}00`))
+            .absolute()
+            .top(0)
+            .left(0)
+            .right(0)
+            .h(height * TOP_FADE_SHARE),
+        ),
+    );
+
+  // Layer 2: the skyline at the poster's foot. Both insets, not a height: a percentage height beside
+  // `bottom(0)` is ignored, and the band then fills the whole poster.
+  const graph = div()
+    .absolute()
+    .top(GRAPH_TOP)
+    .left(PAD_X)
+    .right(PAD_X)
+    .bottom(0)
+    .child(sky.el(t, { ...band, levels, playing, offline }));
+
+  // Layer 3: the words. The title and artist sit at the top left, two lines; the clock and the
+  // transport at the top right, which the pointer brings in. Both are always laid out and only their
+  // ink appears, so nothing shifts when the pointer arrives.
+  const detailsLayer = h_flex()
+    .absolute()
+    .top(0)
+    .left(0)
+    .right(0)
+    .px(12)
+    .pt(8)
+    .gap(8)
+    .items_start()
+    .justify_between()
     .child(
-      h_flex()
-        .w_full()
-        .items_center()
-        .gap(6)
+      v_flex()
+        .flex_1()
+        .min_w(0)
+        .items_start()
+        .gap(1)
         .child(
           div()
-            .flex_1()
-            .min_w(0)
+            .max_w_full()
             .overflow_x_hidden()
             .truncate()
             .text_size(12)
             .text_color(offline || !session ? t.dim : playing ? t.foreground : t.muted)
             .child(title),
         )
-        .when(Boolean(time), (el) =>
-          el.child(div().flex_none().text_size(10.5).text_color(t.muted).child(time)),
-        ),
-    )
-    .when(Boolean(subtitle) || transport, (el) =>
-      el.child(
-        h_flex()
-          .w_full()
-          .items_center()
-          .gap(6)
-          .child(
+        .when(Boolean(subtitle), (el) =>
+          el.child(
             div()
-              .flex_1()
-              .min_w(0)
+              .max_w_full()
               .overflow_x_hidden()
               .truncate()
               .text_size(10)
               .text_color(t.muted)
               .child(subtitle),
-          )
-          .when(transport, (el) =>
-            el.child(
-              h_flex()
-                .items_center()
-                .gap(2)
-                .child(button("prev", "prev.svg", onPrev))
-                .child(button("toggle", playing ? "pause.svg" : "play.svg", onToggle))
-                .child(button("next", "next.svg", onNext)),
-            ),
           ),
-      ),
+        ),
+    )
+    .child(
+      v_flex()
+        .flex_none()
+        .items_end()
+        .gap(2)
+        .opacity(hovered ? 1 : 0)
+        .transition("opacity", 120)
+        .when(Boolean(time), (el) =>
+          el.child(div().text_size(10).text_color(t.muted).child(time)),
+        )
+        .when(Boolean(transport), (el) =>
+          el.child(
+            h_flex()
+              .items_center()
+              .gap(2)
+              .child(button("prev", "prev.svg", onPrev))
+              .child(button("toggle", playing ? "pause.svg" : "play.svg", onToggle))
+              .child(button("next", "next.svg", onNext)),
+          ),
+        ),
     );
 
-  return v_flex()
+  return div()
     .id("media")
     .size_full()
-    .gap(6)
-    .px(12)
-    .pb(6)
-    // The cover keeps the same gap to the bars above as to the footer below. The bars
-    // grow upward from it; the rail keeps its cover centred.
-    .when(compact, (el) => el.justify_center())
-    .when(!compact, (el) => el.justify_end())
-    .on_size_change((size, cx) => onWidth(size, cx))
+    .relative()
+    .overflow_hidden()
+    // The poster's top corners are rounded like the rows above it, and the clip carries the artwork
+    // and the skyline into that shape.
+    .rounded_tl(6)
+    .rounded_tr(6)
+    .on_size_change((size, cx) => onSize(size, cx))
+    .on_hover((on, cx) => onHover(on, cx))
     .when(Boolean(hint), (el) => el.tooltip(hint))
-    .when(!compact, (el) => el.child(bars(levels, playing, offline, t)))
-    .child(
-      h_flex()
-        .w_full()
-        .items_center()
-        .gap(10)
-        .child(art)
-        .when(!compact, (el) => el.child(text)),
-    );
+    .child(art)
+    .child(graph)
+    .child(detailsLayer);
 }
