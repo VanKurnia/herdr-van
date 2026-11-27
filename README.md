@@ -105,6 +105,26 @@ The sidebar name is one string in `~/.config/herdr-app/herdr-van-config.json`:
 Empty (`""`) shows your username instead. Hovering the name always shows
 "Herdr". Edits apply live.
 
+## Keeping this repo in step
+
+For whoever maintains it: the live Herdr home is the source of truth. Editing
+there and committing here is the flow, so the hook at `.githooks/pre-commit`
+runs `tools/sync-from-live.ps1` and then stages **only** what the sync writes —
+`mods/`, `layouts/`, `themes/`, `backgrounds/`, `custom-icons/` and
+`programs.json`. Nothing else is staged, so a stray file shows up in
+`git status` instead of riding along unread; commit it yourself if it belongs.
+The hook is tracked (unlike a file in `.git/hooks/`) so the rule is reviewable.
+
+Activate it once per clone — `core.hooksPath` is local config, not a tracked
+file:
+
+```sh
+git config core.hooksPath .githooks
+```
+
+`bench/results/` is tracked on purpose: a benchmark run adds one file, and
+whoever runs it stages that file.
+
 ## What it touches
 
 Nothing leaves your machine. For honesty's sake, here's every program these mods

@@ -1,0 +1,10 @@
+#!/bin/sh
+# Syncs the live Herdr home into this repo, then stages exactly what the sync wrote.
+# Tracked so the rule is reviewable; activate once with:
+#   git config core.hooksPath .githooks
+# The home is the source of truth. Everything else stays unstaged, so a stray file
+# shows up in `git status` instead of riding along unread.
+set -e
+repo="$(git rev-parse --show-toplevel)"
+pwsh -NoProfile -File "$repo/tools/sync-from-live.ps1" >/dev/null
+git add -A -- mods layouts themes backgrounds custom-icons programs.json
