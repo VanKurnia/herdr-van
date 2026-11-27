@@ -6,7 +6,7 @@ import { h_flex, v_flex } from "gpui-base";
 const ART_OPACITY = 0.42; // the art's floor: with the voice breathing it, 0.5 gain rests near 0.71
 const PAD_X = 8; // the sidebar's own side gutter, so the poster lines up with the lists above it
 const FADE_TOP = "30%"; // where the artwork starts dissolving out
-const TOP_FADE_SHARE = 0.35; // the fade under the top edge, deep enough for two lines of words
+const TOP_FADE_SHARE = 0.134; // 36 of the row's 268 px: the two word lines, top to bottom
 // The fades paint the tone of the backdrop the row stands on, not a panel colour: this build has no
 // mask, so a fade that is both smooth and free of a slab has to end in that tone.
 const SCRIM = "#0a0a19";
@@ -276,6 +276,7 @@ export function row({
             .max_w_full()
             .truncate()
             .text_size(12)
+            .line_height("14px")
             .text_color(offline || !session ? t.dim : playing ? t.foreground : t.muted)
             .child(title),
         )
@@ -285,6 +286,7 @@ export function row({
               .max_w_full()
               .truncate()
               .text_size(10.5)
+              .line_height("13px")
               .text_color(t.accent)
               .child(subtitle),
           ),
@@ -296,7 +298,7 @@ export function row({
         .items_end()
         .gap(2)
         .opacity(hovered ? 1 : 0)
-        .transition("opacity", 120)
+        .transition("opacity", { duration: 140, easing: "ease-out" })
         .when(Boolean(time), (el) =>
           el.child(div().text_size(10).text_color(t.muted).child(time)),
         )
