@@ -6,3 +6,6 @@ gpui-kit.d.ts
 # Installed into the mod by hand, not committed: see mods/media/README.md.
 mods/media/vendor/
 __pycache__/
+
+# Advisor plans: local scratch, not part of the build.
+.plans/
