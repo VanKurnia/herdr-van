@@ -29,8 +29,25 @@ class StoreTest(unittest.TestCase):
 
     def test_publish_writes_one_atomic_body(self):
         self.writer.publish({"session": False})
-        self.assertEqual(json.loads(self.read("state.json")), {"session": False, "v": store.PROTOCOL_V})
+        self.assertEqual(
+            json.loads(self.read("state.json")),
+            {"session": False, "v": store.PROTOCOL_V, "audio": None},
+        )
         self.assertEqual([n for n in os.listdir(self.dir) if n.endswith(".tmp")], [])
+
+    def test_publish_carries_the_audio_note(self):
+        # The audio thread has no writer of its own: its reason rides in publish()'s body, so the
+        # track fields survive it, and a recovery clears it again.
+        self.writer.publish_audio_error("ModuleNotFoundError: numpy")
+        self.writer.publish({"session": True, "title": "Burn", "artist": "Ellie Goulding"})
+        body = json.loads(self.read("state.json"))
+        self.assertEqual(body["audio"], "ModuleNotFoundError: numpy")
+        self.assertEqual(body["title"], "Burn")
+        self.assertEqual(body["artist"], "Ellie Goulding")
+        self.assertEqual(body["v"], store.PROTOCOL_V)
+        self.writer.publish_audio_error(None)
+        self.writer.publish({"session": True, "title": "Burn", "artist": "Ellie Goulding"})
+        self.assertIsNone(json.loads(self.read("state.json"))["audio"])
 
     def test_publish_skips_identical_body(self):
         self.writer.publish({"session": False})
@@ -157,16 +174,6 @@ class StoreTest(unittest.TestCase):
         # No beat yet (the mod is starting), or a beat from an older mod with no second field.
         self.assertTrue(self.writer.wanted())
         self.beat("1700000000")
-        self.assertTrue(self.writer.wanted())
-
-    def test_wanted_is_cached_until_the_beat_changes(self):
-        self.beat("1700000000 0")
-        self.assertFalse(self.writer.wanted())
-        path = os.path.join(self.dir, "beat")
-        stamp = os.stat(path).st_mtime_ns
-        os.utime(path, ns=(stamp, stamp))  # same mtime and size: the cached answer stands
-        self.assertFalse(self.writer.wanted())
-        self.beat("1700000001 1")
         self.assertTrue(self.writer.wanted())
 
     def test_stopping_reads_the_beats_age(self):

@@ -118,12 +118,18 @@ def audio_loop(writer):
     """WASAPI loopback to spectrum bars, in its own thread.
 
     Silences are published while nothing plays, so a paused track leaves a flat
-    line rather than a frozen one.
+    line rather than a frozen one. A failure to start up is published rather than raised:
+    pythonw has no console for a traceback.
     """
-    import numpy as np
-    import soundcard as sc
+    try:
+        import numpy as np
+        import soundcard as sc
 
-    window = np.hanning(BLOCK).astype(np.float32)
+        window = np.hanning(BLOCK).astype(np.float32)
+    except Exception as exc:  # the modules under vendor/, or the window itself
+        print("audio failed: %r" % (exc,), file=sys.stderr, flush=True)
+        writer.publish_audio_error("%s: %s" % (type(exc).__name__, exc))
+        return
     levels = [0.0] * BANDS
     voice_hist = []  # the vocal band's recent levels, for the syllabic cue
     score_hist = []  # the recent voice scores, for the median outlier filter
@@ -168,9 +174,12 @@ def audio_loop(writer):
                     score_hist.append(score)
                     del score_hist[:-5]
                     voice = float(np.median(score_hist))
+                    if writer.audio_note is not None:  # recovered, so the row stops saying why
+                        writer.publish_audio_error(None)
                     writer.publish_levels([round(v, 2) for v in levels], voice)
         except Exception as exc:  # no device yet, or the output device changed
             print("audio failed: %r" % (exc,), file=sys.stderr, flush=True)
+            writer.publish_audio_error("%s: %s" % (type(exc).__name__, exc))
             writer.publish_levels([0] * BANDS)
             time.sleep(2.0)
 

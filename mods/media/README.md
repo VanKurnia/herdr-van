@@ -82,6 +82,16 @@ Renaming or removing a field means bumping `PROTOCOL_V` in both places —
 `store.py`, which stamps it, and `main.js`, which reads it. Adding an optional
 field does not.
 
+`"audio"` is such an addition: the last failure of the audio thread, as text, or
+`null` while it is healthy. The thread that reads WASAPI cannot write `state.json`
+itself — a second writer would blank `title`, `artist` and `playing` every time it
+fired — so it records its verdict on the `Writer` and `publish()` carries it in the
+body it already writes. A start-up failure (the vendored modules, the FFT window) is
+published too, because `pythonw` has no console for a traceback: without it a dead
+audio thread leaves a row that is flat for no stated reason, which looks exactly
+like a paused track. A successful block clears the note, so it cannot outlive the
+condition that set it.
+
 The audio loop drains the loopback recorder only while a track plays *and* somebody is drawing the
 bars. Holding an open recorder costs nothing; calling `record()` on it costs ~6 % of a core, so a
 paused helper sleeps in 50 ms slices and publishes silence — which the file protocol dedupes to no

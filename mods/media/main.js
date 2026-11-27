@@ -30,6 +30,7 @@ const LAUNCH_GRACE_MS = 10000; // a fresh helper needs a few seconds to import w
 const STALE_RETRIES = 2; // relaunches before a helper that is up but wedged is reported
 const OFFLINE_AFTER = 2; // failed launches before the row says why it is empty
 const PROTOCOL_V = 1; // the state.json shape this mod reads; mirrors store.py's PROTOCOL_V
+const AUDIO_WHY = "audio: "; // marks a reason the audio thread published, so a launcher's is never mistaken for one
 // state.json and a new cover are the only payloads worth re-reading: the watch
 // batches everything in the folder, including tick, beat, cmd and helper.lock.
 const STATE_FILES = /^(state\.json|cover-[0-9a-f-]+\.png)$/;
@@ -219,8 +220,9 @@ export default class Media extends View {
         this.pid = pid;
         this.launchFailures = 0; // a launch that worked clears the offline row and the backoff
         // A launcher's reason is history once it starts, but a wedged helper's verdict is not:
-        // this launch may have found that same wedged process still running.
-        if (this.why !== "helper not responding") this.why = null;
+        // this launch may have found that same wedged process still running. Neither is the audio
+        // thread's: only a payload that stops carrying it clears that one.
+        if (this.why !== "helper not responding" && !this.why?.startsWith(AUDIO_WHY)) this.why = null;
       }
       cx.notify(); // the row says why it is empty, so it follows either outcome
     });
@@ -239,6 +241,12 @@ export default class Media extends View {
         this.state = null;
       }
       this.posAt = Date.now();
+      // The audio thread reports its failure inside the same body, because it cannot write one of
+      // its own without blanking the track fields. A launcher's reason is left alone: only a reason
+      // this read set is cleared by its absence.
+      const audio = typeof this.state?.audio === "string" && this.state.audio;
+      if (audio) this.why = AUDIO_WHY + audio;
+      else if (this.why?.startsWith(AUDIO_WHY)) this.why = null;
       // A player that reports no timeline (streams often do: pos 0, dur 0) still needs a clock, so
       // the row counts from the moment this track first appeared. A player that does report one
       // keeps its own position, corrected for the lag since this body was read.
@@ -379,6 +387,9 @@ export default class Media extends View {
     const session = Boolean(this.state?.session);
     const playing = Boolean(this.state?.playing);
     const offline = this.launchFailures >= OFFLINE_AFTER || this.staleRetries >= STALE_RETRIES;
+    // A dead audio thread leaves a running helper that never reaches OFFLINE_AFTER: the reason is
+    // the only thing that tells the flat row apart from a paused track.
+    const audioWhy = this.why?.startsWith(AUDIO_WHY) ? this.why.slice(AUDIO_WHY.length) : "";
     // A helper that predates this field (or a future one) keeps running until it exits: it is a
     // separate process, so the on-disk code can be newer than the payload being served.
     const stale = Boolean(this.state) && this.state.v !== PROTOCOL_V;
@@ -387,13 +398,15 @@ export default class Media extends View {
       : session
         ? this.state.title || "Untitled"
         : "Nothing playing";
-    const subtitle = offline
-      ? REASON[this.why] ?? "helper could not start"
-      : stale
-        ? "helper outdated — restart it"
-        : session
-          ? this.state.artist || ""
-          : "";
+    const subtitle = audioWhy
+      ? audioWhy
+      : offline
+        ? REASON[this.why] ?? "helper could not start"
+        : stale
+          ? "helper outdated — restart it"
+          : session
+            ? this.state.artist || ""
+            : "";
     // Only the dependency case has an action worth carrying; the other two are already sentences.
     const hint = offline && this.why === "no-deps" ? PIP : "";
 

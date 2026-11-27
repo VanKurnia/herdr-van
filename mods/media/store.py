@@ -48,8 +48,6 @@ class Writer:
         self.levels = None
         self.levels_at = 0.0
         self.playing = False
-        self._beat = None  # (mtime, size) of the beat the cached answer was read from
-        self._wanted = True  # whether the mod is drawing the bars
         self.cover = None  # last cover path published for this track
         self.cover_key = None  # the track that path belongs to
         self.cover_digest = None  # the bytes behind self.cover, so a re-read of the same art writes nothing
@@ -57,6 +55,7 @@ class Writer:
         self.cover_settle = 0.0  # monotonic deadline while late art is still worth re-reading
         self.raw_cover = None  # the bytes the player gave us, kept so a resize needs no re-read
         self.art_px = 0  # the pixel size the current cover file was encoded at
+        self.audio_note = None  # why the audio path last failed, or None
 
     def stopping(self):
         # Written by the mod, never by this process.
@@ -70,24 +69,14 @@ class Writer:
         """Whether the mod is drawing the bars, from the beat's second field.
 
         A beat with no second field means yes, as does one that is not there yet: the mod writes
-        its width on a timer, and an old mod cannot say otherwise. The answer is cached against the
-        file's own identity, because the audio loop asks once per block and opening a file costs ten
-        times what stating one does.
+        its width on a timer, and an old mod cannot say otherwise.
         """
         try:
-            info = os.stat(self.beat_path)
+            with open(self.beat_path, encoding="utf-8") as fh:
+                fields = fh.read().split()
         except OSError:
             return True
-        key = (info.st_mtime_ns, info.st_size)
-        if key != self._beat:
-            try:
-                with open(self.beat_path, encoding="utf-8") as fh:
-                    fields = fh.read().split()
-            except OSError:
-                return True
-            self._beat = key
-            self._wanted = len(fields) < 2 or fields[1] != "0"
-        return self._wanted
+        return len(fields) < 2 or fields[1] != "0"
 
     def _command(self):
         """The click in `cmd`, as (stamp, action); (0, None) when there is nothing to read."""
@@ -134,12 +123,22 @@ class Writer:
         self._atomic("tick", str(int(time.time())))
 
     def publish(self, record):
+        """Write the whole state body, with the audio thread's verdict riding along.
+
+        The audio thread never writes state.json itself: two writers would each overwrite the
+        other's body, blanking the row every time one of them fired. Adding a field is backward
+        compatible, so PROTOCOL_V stays 1.
+        """
         # One field every body carries, so the mod can tell an older helper's payload from its own.
-        body = json.dumps({**record, "v": PROTOCOL_V}, ensure_ascii=False)
+        body = json.dumps({**record, "v": PROTOCOL_V, "audio": self.audio_note}, ensure_ascii=False)
         if body == self.state:
             return
         self.state = body
         self._atomic("state.json", body)
+
+    def publish_audio_error(self, note):
+        """Record why the audio path failed, or None once it works again."""
+        self.audio_note = note
 
     def publish_levels(self, levels, voice=0.0):
         # One shape every time: the mod reads `v` for the art's breath and treating an absent field as
