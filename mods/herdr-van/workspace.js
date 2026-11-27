@@ -3,6 +3,7 @@
 // store and the readers that fill it.
 
 import { readTextFile, spaces, panes, home, shared, setShared, run, notify } from "herdr";
+import { park } from "./lib.js";
 
 export const LIST = "workspace.list";
 export const MODE = "workspace.mode";
@@ -218,14 +219,12 @@ const startFolder = (rec) => (rec.tabs ?? []).map((t) => firstLeaf(t.root)).find
 const OPEN_STALE = 120000;
 let opening = null; // { name, at }
 
-const sleep = (cx, ms) => new Promise((resolve) => cx.timer.after(ms, () => resolve()));
-
 // Waits until probe() returns something truthy; issues no commands itself.
 async function until(cx, probe, tries = 40, ms = 150) {
   for (let i = 0; i < tries; i++) {
     const v = probe();
     if (v) return v;
-    await sleep(cx, ms);
+    await park(cx, ms);
   }
   return null;
 }
@@ -298,10 +297,10 @@ async function buildTree(cx, rec, spaceId, tabIndex, root) {
       // terminal.open's place is relative to the FOCUSED pane, so focus first
       // and let it land before opening.
       run("pane.focus", { pane: step.anchor });
-      await sleep(cx, 120);
+      await park(cx, 120);
       run("terminal.open", { folder: step.leaf.cwd ?? rec.folder, place: step.direction });
     }
-    await sleep(cx, 200);
+    await park(cx, 200);
   }
   throw new Error("the tree did not converge");
 }

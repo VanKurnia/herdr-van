@@ -6,14 +6,11 @@
 import { div, svg, image, PathBuilder, Background } from "gpui-kit";
 import { h_flex } from "gpui-base";
 import { spaces, panes, agents, run, openOverlay, theme, window, layout, settings, focused, home, appHome, exec, watchFolder, checking } from "herdr";
-import { hidden, sidebar } from "./lib.js";
+import { hidden, park, sidebar } from "./lib.js";
 
 // Where pi keeps one session log per folder: `sessions/--C--Users-ivan-app--`, the path with its
 // separators and drive colon turned to dashes.
 const sessionsFor = (cwd) => `${home()}/.pi/agent/sessions/--${cwd.replace(/[:\\/]/g, "-")}--`;
-
-// Resolve after a wait without a polling clock of our own.
-const park = (cx, ms) => new Promise((done) => cx.timer.after(ms, done));
 
 const FLOOR = 60; // tok/s the box always spans, so a quiet stretch does not fill it
 const SETTLE_MS = 600; // writes arrive in bursts; a burst is one message

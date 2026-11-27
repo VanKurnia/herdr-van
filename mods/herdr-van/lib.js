@@ -28,6 +28,10 @@ export const narrow = () => (sidebar()?.size?.px ?? Infinity) < 160;
 // A hidden or minimized window has nobody to show work to, so its timers and redraws wait.
 export const hidden = () => window()?.visible === false;
 
+// A promise that settles on the view's own clock. The only timer a callback may use: a `cx` must
+// not outlive the callback it arrived with, so waiting is expressed as this, not as a stored handle.
+export const park = (cx, ms) => new Promise((done) => cx.timer.after(ms, done));
+
 // True while the pointer is on any part of the sidebar. Its parts are separate
 // copies of this mod, so the answer has to travel through shared state; each part
 // claims it by name and clears only its own claim, so moving from one part to the
