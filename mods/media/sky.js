@@ -67,6 +67,12 @@ export class Sky {
     const cols = Math.max(8, Math.floor(width / PITCH_X));
     const rows = Math.max(2, Math.min(12, Math.floor((barH - BASE - PITCH_Y - 4) / PITCH_Y)));
     this.cols = cols;
+    // The columns stand on a PITCH_X grid and the ink of the first one starts at the grid's own left
+    // edge, so a band that is not a whole number of pitches wide leaves a remainder: it is split
+    // between the two sides, and the skyline sits centred instead of pushed left with a gap on the
+    // right. The columns and the sparks both read this one offset, so a spark still lands on its
+    // column. Floored to a whole pixel, and the dots start on an even one, so no dot is half-lit.
+    this.offX = Math.max(0, Math.floor((width - ((cols - 1) * PITCH_X + DOT)) / 2));
     this.used = Array.from({ length: cols }, (_, c) => {
       if (!live) return 1;
       const p = (c / (cols - 1)) * (n - 1);
@@ -193,20 +199,21 @@ export class Sky {
     const columnOf = (b) => Math.round((b / (n - 1)) * (this.cols - 1));
     const from = columnOf(band);
     const to = Math.min(this.cols - 1, Math.max(0, from + pick([-3, -2, -1, 1, 2, 3])));
+    const offX = this.offX ?? 0; // the same shift the columns are drawn at
     s.state = "up";
     s.startAt = at;
     s.hop = Math.max(150, Math.min(320, this.beat / 2)); // half a beat, once the bass has told us
     s.landCol = to;
-    s.x0 = from * PITCH_X;
+    s.x0 = offX + from * PITCH_X;
     s.y0 = barH - BASE - heightOf(this.used[from]);
     // The apex sits between the two columns, one to `reach` rows above the taller of them, and never
     // at the very top of the band: the burst would just smear along that edge.
-    s.mx = Math.round(((from + to) / 2) * PITCH_X);
+    s.mx = Math.round(offX + ((from + to) / 2) * PITCH_X);
     s.my = Math.max(
       PITCH_Y,
       Math.min(s.y0, barH - BASE - heightOf(this.used[to])) - (1 + Math.round(Math.random() * voice.reach)) * PITCH_Y,
     );
-    s.x1 = to * PITCH_X;
+    s.x1 = offX + to * PITCH_X;
     s.y1 = barH - BASE - heightOf(this.used[to]);
     s.color = palette(n, t)(band);
     s.bright = blend(s.color, "#ffffff", 0.35); // the newest event is the brightest thing on screen
@@ -236,6 +243,9 @@ export class Sky {
 
     const live = playing && !offline;
     const cols = this.cols;
+    // The offset `measure` worked out for these columns: the sparks carry the same one, so their
+    // tops still line up with the columns they left and landed on.
+    const offX = this.offX ?? 0;
     const paint = globalThis.window;
     const tone = palette(n, t);
     const out = [];
@@ -251,7 +261,7 @@ export class Sky {
     for (let c = 0; c < cols; c++) {
       const dots = this.used[c] ?? 1;
       const h = heightOf(dots);
-      const x = c * PITCH_X + DOT / 2;
+      const x = offX + c * PITCH_X + DOT / 2;
       const zone = Math.min(ZONES - 1, Math.floor((c / Math.max(1, cols - 1)) * ZONES));
       const body = Math.min(BODY_ZONES - 1, Math.floor((c / Math.max(1, cols - 1)) * BODY_ZONES));
       // One dashed line instead of one quad per dot: the dashes are the dots. Drawn from the column's
