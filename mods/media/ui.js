@@ -4,7 +4,7 @@ import { div, image, svg, PathBuilder, Background } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 
 const ART_OPACITY = 0.42; // the art's floor: with the voice breathing it, 0.5 gain rests near 0.71
-const PAD_X = 8; // the sidebar's own side gutter, so the poster lines up with the lists above it
+const PAD_X = 0; // the poster runs edge to edge: it no longer lines up with the lists' 8px gutter
 const FADE_TOP = "30%"; // where the artwork starts dissolving out
 const TOP_FADE_SHARE = 0.134; // 36 of the row's 268 px: the two word lines, top to bottom
 // The fades paint the tone of the backdrop the row stands on, not a panel colour: this build has no
