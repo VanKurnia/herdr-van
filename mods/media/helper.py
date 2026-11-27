@@ -39,7 +39,8 @@ from levels import (  # noqa: E402
     RATE,
     VOICE_BINS,
     level,
-    release,
+    envelope,
+    gain,
     voice_activity,
 )
 from store import Writer  # noqa: E402
@@ -131,6 +132,7 @@ def audio_loop(writer):
         writer.publish_audio_error("%s: %s" % (type(exc).__name__, exc))
         return
     levels = [0.0] * BANDS
+    drawn_peak = 1.0  # full scale, which is also what the first block draws with
     voice_hist = []  # the vocal band's recent levels, for the syllabic cue
     score_hist = []  # the recent voice scores, for the median outlier filter
     last = time.monotonic()
@@ -163,7 +165,7 @@ def audio_loop(writer):
                         continue  # a device can hand back a short first block
                     spec = np.abs(np.fft.rfft(mono * window))
                     fresh = [level(float(spec[a:b].max()) / LOUDNESS) for a, b in BAND_RANGES]
-                    levels = release(fresh, levels, dt)
+                    levels = envelope(fresh, levels, dt)
                     # Spectral flatness over the voice's own bins: low for anything pitched, high for
                     # noise and cymbals. Cheap here, and it is the one cue the band levels cannot give.
                     power = spec[VOICE_BINS[0] : VOICE_BINS[1]] ** 2 + 1e-12
@@ -176,7 +178,10 @@ def audio_loop(writer):
                     voice = float(np.median(score_hist))
                     if writer.audio_note is not None:  # recovered, so the row stops saying why
                         writer.publish_audio_error(None)
-                    writer.publish_levels([round(v, 2) for v in levels], voice)
+                    # One gain for the whole spectrum, after the voice score has seen the raw levels:
+                    # the score is a share of one band against the rest, so it must not be normalised.
+                    drawn, drawn_peak = gain(levels, drawn_peak, dt)
+                    writer.publish_levels([round(v, 2) for v in drawn], voice)
         except Exception as exc:  # no device yet, or the output device changed
             print("audio failed: %r" % (exc,), file=sys.stderr, flush=True)
             writer.publish_audio_error("%s: %s" % (type(exc).__name__, exc))

@@ -104,8 +104,10 @@ answers `Writer.wanted()`. A folded sidebar used to cost the same ~11 % of a cor
 for a spectrum nothing could show; with the flag it costs ~1.3 % (measured: 11.5 % expanded, 1.3 %
 folded, 12.7 % after restoring). A beat with no second field, from an older mod, means yes.
 
-The levels fall in real time, not per block: `release()` in `levels.py` turns a monotonic clock's
-delta into the fall (0.25 s time constant); a rise lands at once, so a kick is not smeared. A
+The levels move in real time, not per block: `envelope()` in `levels.py` turns a monotonic clock's
+delta into both the rise and the fall (45 ms attack, 0.25 s release). A rise is smoothed rather than
+instant, so a transient is drawn as an attack instead of snapped to full height; the fall is the
+slower half, so the bars still drop away rather than hanging. Both are clocked for the same reason: a
 per-block decay tied the fall to the device's block rate, so a track fell faster on a 48 kHz device
 than on a 44.1 kHz one, and a dropped block doubled the step.
 

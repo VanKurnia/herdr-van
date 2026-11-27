@@ -1,11 +1,59 @@
 import math
 import os
+import random
 import sys
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import levels
+
+
+def reference_fluctuation(history, frame_hz):
+    """The straightforward DFT `levels.fluctuation` used to run: every bin, trig rebuilt per call."""
+    n = len(history)
+    if n < 8:
+        return 0.0
+    mean = sum(history) / n
+    centred = [value - mean for value in history]
+    in_band = 0.0
+    total = 0.0
+    for k in range(1, n // 2 + 1):
+        hz = k * frame_hz / n
+        weight = 2.0 * math.pi * k / n
+        real = 0.0
+        imaginary = 0.0
+        for i, value in enumerate(centred):
+            real += value * math.cos(weight * i)
+            imaginary -= value * math.sin(weight * i)
+        power = real * real + imaginary * imaginary
+        total += power
+        if levels.FLUCT_LOW_HZ <= hz <= levels.FLUCT_HIGH_HZ:
+            in_band += power
+    return in_band / total if total > 0.0 else 0.0
+
+
+class FluctuationTest(unittest.TestCase):
+    def test_matches_the_transform_it_replaced(self):
+        # The rewrite is only a rewrite: same answer as the all-bins DFT on every history length the
+        # envelope can have.
+        rng = random.Random(7)
+        frame_hz = levels.RATE / levels.BLOCK
+        for _ in range(200):
+            length = rng.randint(8, levels.VOICE_FRAMES)
+            history = [rng.random() for _ in range(length)]
+            self.assertLess(
+                abs(levels.fluctuation(history, frame_hz) - reference_fluctuation(history, frame_hz)), 1e-9
+            )
+
+    def test_too_short_is_nothing(self):
+        self.assertEqual(levels.fluctuation([0.5] * 7, levels.RATE / levels.BLOCK), 0.0)
+
+    def test_a_constant_history_moves_not_at_all(self):
+        # 0.5 divides exactly, so the mean-centring leaves true zeros rather than rounding dust.
+        history = [0.5] * levels.VOICE_FRAMES
+        self.assertEqual(levels.fluctuation(history, levels.RATE / levels.BLOCK), 0.0)
+        self.assertEqual(reference_fluctuation(history, levels.RATE / levels.BLOCK), 0.0)
 
 
 class BandRangeTest(unittest.TestCase):
@@ -85,24 +133,88 @@ class VoiceTest(unittest.TestCase):
 
 
 
-class ReleaseTest(unittest.TestCase):
+class GainTest(unittest.TestCase):
+    def run_gain(self, spectrum, seconds, peak=1.0, frame_hz=levels.RATE / levels.BLOCK):
+        dt = 1.0 / frame_hz
+        scaled = spectrum
+        for _ in range(int(seconds * frame_hz)):
+            scaled, peak = levels.gain(spectrum, peak, dt)
+        return scaled, peak
+
+    def test_a_quiet_spectrum_fills_the_row(self):
+        # 0.25 of full scale is what a quiet master draws; over a few seconds it should reach the top.
+        scaled, _ = self.run_gain([0.25] * levels.BANDS, 10.0)
+        self.assertAlmostEqual(max(scaled), 1.0, places=3)
+        self.assertAlmostEqual(min(scaled), 1.0, places=3)
+
+    def test_full_scale_is_left_alone(self):
+        # No time passing means no decay: a row already at full scale is drawn as it came in.
+        scaled, peak = levels.gain([1.0, 0.5], 1.0, 0.0)
+        self.assertEqual(peak, 1.0)
+        self.assertEqual(scaled, [1.0, 0.5])
+
+    def test_silence_lets_the_peak_decay(self):
+        # A loud peak must not stick: without this a quiet passage after a chorus stays invisible.
+        quiet = [0.02] * levels.BANDS
+        silent, peak = self.run_gain([0.0] * levels.BANDS, 10.0, peak=1.0)
+        self.assertEqual(silent, [0.0] * levels.BANDS)
+        self.assertLess(peak, 0.05)
+        _, later = self.run_gain(quiet, 0.0, peak=peak)
+        self.assertLess(later, 1.0)
+
+    def test_the_peak_never_exceeds_the_loudest_band(self):
+        peak = 0.5
+        for _ in range(400):
+            bands = [0.1, 0.3, 0.2]
+            _, peak = levels.gain(bands, peak, 0.0464)
+            self.assertLessEqual(peak, max(0.5, max(bands)) + 1e-12)
+
+    def test_band_ratios_survive_the_gain(self):
+        # The property that protects voice_activity and the skyline: one gain moves the whole row, it
+        # does not flatten the bands toward each other.
+        bands = [0.2] * levels.BANDS
+        bands[levels.VOICE_RANGE[0]] = 0.6
+        scaled, _ = levels.gain(bands, 1.0, 0.0464)
+        self.assertAlmostEqual(scaled[levels.VOICE_RANGE[0]] / scaled[0], 0.6 / 0.2, places=9)
+
+    def test_nothing_to_see_stays_flat(self):
+        scaled, peak = self.run_gain([0.0] * levels.BANDS, 60.0)
+        self.assertEqual(scaled, [0.0] * levels.BANDS)
+        self.assertLess(peak, 1e-6)
+
+
+class EnvelopeTest(unittest.TestCase):
     def test_fall_follows_the_clock_not_the_block(self):
         # One time constant of release leaves 1/e of the gap, whatever the block rate is.
-        one_tau = levels.release([0.0], [1.0], levels.TAU_RELEASE)[0]
+        one_tau = levels.envelope([0.0], [1.0], levels.TAU_RELEASE)[0]
         self.assertAlmostEqual(one_tau, 1 / math.e, places=3)
-        self.assertGreater(levels.release([0.0], [1.0], levels.TAU_RELEASE / 2)[0], one_tau)
-        self.assertLess(levels.release([0.0], [1.0], levels.TAU_RELEASE * 2)[0], one_tau)
+        self.assertGreater(levels.envelope([0.0], [1.0], levels.TAU_RELEASE / 2)[0], one_tau)
+        self.assertLess(levels.envelope([0.0], [1.0], levels.TAU_RELEASE * 2)[0], one_tau)
 
     def test_no_time_means_no_change(self):
-        self.assertEqual(levels.release([0.0, 1.0], [0.5, 0.2], 0), [0.5, 0.2])
+        self.assertEqual(levels.envelope([0.0, 1.0], [0.5, 0.2], 0), [0.5, 0.2])
 
-    def test_attack_reaches_the_new_value_at_once(self):
-        self.assertEqual(levels.release([0.9], [0.1], 0.046)[0], 0.9)
+    def test_a_rise_is_smoothed_by_the_attack(self):
+        # One block (2048 samples at 44.1 kHz is 46.4 ms) gets most, not all, of the way up.
+        dt = levels.BLOCK / levels.RATE
+        risen = levels.envelope([1.0], [0.0], dt)[0]
+        self.assertAlmostEqual(risen, 1.0 - math.exp(-dt / levels.TAU_ATTACK), places=6)
+        self.assertGreater(risen, 0.6)
+        self.assertLess(risen, 0.7)
+
+    def test_a_fall_is_slower_than_a_rise(self):
+        # The asymmetry is the point: same block, same distance, very different fractions.
+        dt = levels.BLOCK / levels.RATE
+        rise = levels.envelope([1.0], [0.0], dt)[0]
+        fall = 1.0 - levels.envelope([0.0], [1.0], dt)[0]
+        self.assertAlmostEqual(fall, 1.0 - math.exp(-dt / levels.TAU_RELEASE), places=6)
+        self.assertLess(fall, 0.2)
+        self.assertGreater(rise, fall * 3)
 
     def test_never_overshoots(self):
         for dt in (0.01, 0.046, 0.5, 5.0):
             for fresh, prev in ((0.0, 1.0), (1.0, 0.0), (0.6, 0.6)):
-                value = levels.release([fresh], [prev], dt)[0]
+                value = levels.envelope([fresh], [prev], dt)[0]
                 self.assertGreaterEqual(value, min(fresh, prev) - 1e-9)
                 self.assertLessEqual(value, max(fresh, prev) + 1e-9)
 

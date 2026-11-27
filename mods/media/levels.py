@@ -13,7 +13,9 @@ BLOCK = 2048
 LOW_HZ = 40.0
 HIGH_HZ = 16000.0
 FLOOR_DB = -55.0  # a band quieter than this reads as empty
-TAU_RELEASE = 0.25  # s, the bar fall; time-based, because the block rate varies by device
+TAU_ATTACK = 0.045  # s, the bar rise
+TAU_RELEASE = 0.25  # s, the bar fall; both time-based, because the block rate varies by device
+TAU_GAIN = 3.0  # s, how fast the full scale forgets a peak
 LOUDNESS = BLOCK * 0.25  # FFT peak that counts as full scale
 
 
@@ -52,12 +54,38 @@ VOICE_RANGE = voice_slice()
 VOICE_BINS = (BAND_RANGES[VOICE_RANGE[0]][0], BAND_RANGES[VOICE_RANGE[1]][1])
 
 
+# The band's cosines and sines, built once per (history length, frame rate) rather than per call: the key
+# space is one entry per length the envelope can have (VOICE_FRAMES) at the caller's one frame rate.
+_FLUCT_TABLES = {}
+
+
+def _band_tables(n, frame_hz):
+    """The (cosines, sines) of each bin inside the syllable band, for a history of `n` samples."""
+    key = (n, frame_hz)
+    tables = _FLUCT_TABLES.get(key)
+    if tables is None:
+        tables = []
+        for k in range(1, n // 2 + 1):
+            if FLUCT_LOW_HZ <= k * frame_hz / n <= FLUCT_HIGH_HZ:
+                weight = 2.0 * math.pi * k / n
+                tables.append(
+                    (
+                        [math.cos(weight * i) for i in range(n)],
+                        [math.sin(weight * i) for i in range(n)],
+                    )
+                )
+        _FLUCT_TABLES[key] = tables
+    return tables
+
+
 def fluctuation(history, frame_hz):
     """How much of the vocal envelope's motion sits in the syllable band, 0..1.
 
     The classic fluctogram, in miniature: a sung line wavers at a few hertz, a held pad barely moves at
-    all, and a drum kit's motion is faster and broadband. A small DFT over the history answers it — 24
-    samples, a dozen bins, nothing at twenty frames a second.
+    all, and a drum kit's motion is faster and broadband. Not a general DFT: only the bins inside the
+    syllable band are transformed, and their trig is tabulated once per history length, so twenty
+    frames a second cost no trigonometry at all. The denominator is not a sum of bins either — see
+    below.
     """
     n = len(history)
     if n < 8:
@@ -65,19 +93,20 @@ def fluctuation(history, frame_hz):
     mean = sum(history) / n
     centred = [value - mean for value in history]
     in_band = 0.0
-    total = 0.0
-    for k in range(1, n // 2 + 1):
-        hz = k * frame_hz / n
-        weight = 2.0 * math.pi * k / n
+    for cosines, sines in _band_tables(n, frame_hz):
         real = 0.0
         imaginary = 0.0
         for i, value in enumerate(centred):
-            real += value * math.cos(weight * i)
-            imaginary -= value * math.sin(weight * i)
-        power = real * real + imaginary * imaginary
-        total += power
-        if FLUCT_LOW_HZ <= hz <= FLUCT_HIGH_HZ:
-            in_band += power
+            real += value * cosines[i]
+            imaginary -= value * sines[i]
+        in_band += real * real + imaginary * imaginary
+    # Parseval, instead of transforming the bins nobody looks at: the energies of all n bins sum to
+    # n·Σx², which counts every bin above Nyquist twice. The history is centred (X_0 = 0); when n is
+    # even the top bin is its own conjugate, real because sin(pi·i) = 0, and counted once.
+    total = n * sum(value * value for value in centred) / 2.0
+    if n % 2 == 0:
+        nyquist = sum(value if i % 2 == 0 else -value for i, value in enumerate(centred))
+        total += nyquist * nyquist / 2.0
     return in_band / total if total > 0.0 else 0.0
 
 
@@ -115,19 +144,36 @@ def voice_activity(levels, history, flatness=None, frame_hz=RATE / BLOCK):
     return max(0.0, min(1.0, (0.35 * share + 0.35 * syllables + 0.30 * tone) * (1.0 if len(history) >= 8 else 0.6)))
 
 
+def gain(bands, peak, dt):
+    """Scale the whole spectrum by one recent-peak normaliser, so a quiet master still fills the row.
+
+    One gain rather than one per band: the bands' relative heights are the picture, and the voice
+    score is a share of one band against the rest, so scaling all of them together leaves both intact.
+    The peak rises at once and forgets over TAU_GAIN. Returns the scaled levels and the peak to pass
+    back in next block.
+    """
+    peak = max(max(bands, default=0.0), peak * math.exp(-dt / TAU_GAIN))
+    if peak <= 1e-6:
+        return list(bands), peak
+    return [min(1.0, v / peak) for v in bands], peak
+
+
 def level(peak):
     """An FFT peak as 0..1 between FLOOR_DB and full scale."""
     db = 20.0 * math.log10(peak) if peak > 1e-9 else -120.0
     return max(0.0, min(1.0, (db - FLOOR_DB) / -FLOOR_DB))
 
 
-def release(fresh, prev, dt):
-    """Fall toward `fresh` over `dt` seconds of real time; a rise lands at once.
+def envelope(fresh, prev, dt):
+    """Rise toward `fresh` quickly and fall slowly, over `dt` seconds of real time.
 
-    A clock keeps the fall honest when blocks are dropped, and independent of the sample rate: a
-    per-block factor made the same track fall faster on a 48 kHz device than on a 44.1 kHz one.
+    Both directions are clocked rather than per-block, because the block rate varies by device: a
+    per-block factor made the same track fall faster on a 48 kHz device than on a 44.1 kHz one. A rise
+    is smoothed too, by the short TAU_ATTACK, so a transient is drawn as an attack rather than snapped
+    to full height.
     """
     if dt <= 0:
         return list(prev)
+    rise = 1.0 - math.exp(-dt / TAU_ATTACK)
     fall = 1.0 - math.exp(-dt / TAU_RELEASE)
-    return [max(f, p + (f - p) * fall) for f, p in zip(fresh, prev)]
+    return [p + (f - p) * (rise if f > p else fall) for f, p in zip(fresh, prev)]
