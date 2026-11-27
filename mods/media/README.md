@@ -157,6 +157,51 @@ The OS deletes the file when the handle closes — a crash included — so a loc
 cannot be left behind and a competitor cannot take it in the gap between closing
 and unlinking. A lock older than 15 s with no living owner is still taken over.
 
+## What the drawing API allows
+
+The row is drawn with Herdr's gpui-kit, and `gpui-kit.d.ts` in the app home is the
+authority on what that surface offers: the app rewrites it on every start from the
+bindings it carries. These are the places where the drawing runs into it.
+
+- `bg()` takes a colour and nothing else (`gpui-kit.d.ts:1368`), so an element has
+  no gradient background; every gradient in the row is a `window.paint_path(...)`
+  element instead — the scrims over the cover, the skyline's columns.
+- `paint_path` is the only native painting primitive (`gpui-kit.d.ts:20530`), so
+  everything shaped or shaded is a path: the fades, the spectrum curve, the
+  skyline.
+- `.opacity()` on a `paint_path` element does not change the rendered pixels
+  (measured, not declared; measured earlier and not re-verified since), so the
+  alpha lives in the gradient's colours. Several `paint_path` chains in `sky.js`
+  still call `.opacity()`, and whether those calls are dead is unproven.
+- `Background.opacity(factor)` does render and multiplies both gradient stops
+  (`gpui-kit.d.ts:20442`): measured, solid white reads 255.00 and white at
+  `opacity(0.5)` reads 136.09 against a 16.95 backdrop, where the prediction is
+  135.98. The scrims and the skyline's columns rely on it.
+- `BackgroundStop` is an empty interface (`gpui-kit.d.ts:20440`) and stop
+  percentages do not render: `linear_gradient` (`gpui-kit.d.ts:20448`) takes two
+  colours and nothing between them, so a fade that wants a mid-stop is stacked
+  gradients with the alpha in their colours.
+- The background surface is `solid`, `linear_gradient`, `pattern_slash` and
+  `checkerboard` (`gpui-kit.d.ts:20445-20451`) — no radial gradient, no mask, no
+  object-fit, no `bg_image`. The corner scrims are stacked linear fades, and the
+  cover's fit is arithmetic in `ui.js`.
+- `line_height` takes a bare number as a multiplier and a string as a length
+  (`gpui-kit.d.ts:1409-1410`); nothing in the row sets it.
+- `PathBuilder` builds geometry with `move_to`, `add_polygon`, `curve_to` and
+  `dash_array`, and closes with `fill()` or `stroke(w)` (`gpui-kit.d.ts:20425-20438`);
+  a coordinate is a number of pixels or a percentage string
+  (`gpui-kit.d.ts:22135`). `fullRect` and the skyline are built from these.
+- `linear_gradient`'s angle runs `0` left→right and `180` top→bottom (measured,
+  not declared); `90` and `270` are vertical too and paint nothing useful across a
+  wide box. Every scrim uses `180`.
+- Motion runs natively — `transition`, `spring`, `loop`, `frames`, `spin`
+  (`gpui-kit.d.ts:1247-1266`) — never a timer per frame; the transport's fade is a
+  native `transition`.
+
+A feature found in upstream GPUI may not be reachable here: a mod sees a JavaScript
+bridge over a pinned snapshot of it, and the declarations in `gpui-kit.d.ts` are
+what that bridge exposes.
+
 ## Tests
 
 The spectrum maths and the file protocol are plain Python, so they are tested
