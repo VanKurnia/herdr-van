@@ -301,10 +301,9 @@ export class Sky {
       const edge = (live ? 1 : 0.3) * (1 - 0.45 * away * away);
       const color = tone(((z + 0.5) / BODY_ZONES) * (n - 1));
       const shade = /^#[0-9a-fA-F]{6}$/.test(color) ? color : "#ffffff";
-      const head = Math.round(255 * edge).toString(16).padStart(2, "0");
       out.push(
         paint
-          .paint_path(path.build(), Background.linear_gradient(180, `${shade}${head}`, `${shade}00`))
+          .paint_path(path.build(), Background.linear_gradient(180, shade, `${shade}00`).opacity(edge))
           .id(`cols-${z}`)
           .absolute()
           .left(0)

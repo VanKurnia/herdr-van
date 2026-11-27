@@ -233,7 +233,7 @@ export function row({
         // edge to see, and arrives just short of solid at the foot.
         .child(
           paint
-            .paint_path(veil, Background.linear_gradient(180, `${SCRIM}00`, `${SCRIM}f0`))
+            .paint_path(veil, Background.linear_gradient(180, `${SCRIM}00`, SCRIM).opacity(0.94))
             .absolute()
             .top(GRAPH_TOP)
             .left(0)
@@ -274,7 +274,6 @@ export function row({
         .child(
           div()
             .max_w_full()
-            .overflow_x_hidden()
             .truncate()
             .text_size(12)
             .text_color(offline || !session ? t.dim : playing ? t.foreground : t.muted)
@@ -284,7 +283,6 @@ export function row({
           el.child(
             div()
               .max_w_full()
-              .overflow_x_hidden()
               .truncate()
               .text_size(10.5)
               .text_color(t.accent)

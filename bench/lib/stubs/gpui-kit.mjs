@@ -56,7 +56,17 @@ export class PathBuilder {
   static fill() { return new PathBuilder(); }
   static stroke(_width) { return new PathBuilder(); }
 }
-export const Background = { linear_gradient: () => ({}) };
+// A background is a paint description, not an element: it adds nothing to the tree. The real
+// builder chains (`Background.solid(c).opacity(0.5)`), so the stand-in's methods all return the
+// same object rather than a fresh `{}` that a chain could not continue from.
+function background() {
+  const bg = { opacity: () => bg, color_space: () => bg };
+  return bg;
+}
+export const Background = {
+  solid: () => background(),
+  linear_gradient: () => background(),
+};
 
 // The app's base class: mods extend it and implement init/render.
 export class View {
