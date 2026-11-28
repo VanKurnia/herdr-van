@@ -1,17 +1,16 @@
 // The row itself: a cover, two lines of text, the skyline, and the transport. Nothing here reads a
 // file, runs a process or keeps state: it is handed the values and draws them.
-import { div, image, svg, PathBuilder, Background } from "gpui-kit";
+import { div, image, svg } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 
 const ART_OPACITY = 0.5; // the art's floor: with the voice breathing it, 0.5 gain rests near 0.75
 const HEAD_H = 24; // the sidebar's section titles are 11 px in a 24 px row
 const HEAD_GAP = 6; // air between that row and the poster, so the poster is not part of the title
 const PAD_X = 0; // the poster runs edge to edge: it no longer lines up with the lists' 8px gutter
-const FADE_TOP = "30%"; // where the artwork starts dissolving out
-const TOP_FADE_PX = 15; // the veil under the header: a short blend, not a haze over the portrait
-// The fades paint the tone of the backdrop the row stands on, not a panel colour: this build has no
-// mask, so a fade that is both smooth and free of a slab has to end in that tone.
-const SCRIM = "#0a0a19";
+// Every dissolve is baked into the cover's own alpha (see `fade_top` and `fade_bottom` in store.py):
+// the poster goes to nothing over whatever it stands on, so the wallpaper of the moment shows through
+// and no backdrop colour has to be guessed here. This build has no mask, and a band of clipped copies
+// is culled when its top leaves the clip, so the ramp has to arrive baked in the image.
 const GRAPH_SHARE = 0.3; // the skyline's band: this much of the poster's height, at its foot
 const GRAPH_TOP = `${((1 - GRAPH_SHARE) * 100).toFixed(1)}%`; // where that band starts
 
@@ -25,22 +24,6 @@ export const bandOf = (width, height) => ({
   width: Math.max(0, width - PAD_X * 2),
   barH: Math.max(0, height - HEAD_H - HEAD_GAP) * GRAPH_SHARE,
 });
-
-// A filled rect over whatever box it is given: the fades are painted paths, not a background with
-// stops, because `Background.stop` percentages are ignored in this build and render flat.
-function fullRect() {
-  return PathBuilder.fill()
-    .add_polygon(
-      [
-        ["0%", "0%"],
-        ["100%", "0%"],
-        ["100%", "100%"],
-        ["0%", "100%"],
-      ],
-      true,
-    )
-    .build();
-}
 
 // The bands are log-spaced over this range (levels.py), so a band's colour follows the frequency it
 // stands for and keeps its place if the band count changes.
@@ -130,6 +113,17 @@ export function palette(n, t) {
 }
 
 // `onWidth` is the size callback's body, so this file never touches the view's cx.
+// The cover's own geometry, in logical px: the square it is drawn at, and how much of its top the
+// poster's edge hides. A square wider than the poster starts above the clip, so the helper has to
+// bake the fade at that offset: baked at row 0 it lands where nothing is seen.
+export function artShape(width, height) {
+  const artW = bandOf(width, height).width;
+  const artH = Math.max(0, height - HEAD_H - HEAD_GAP);
+  const side = Math.max(artW, artH);
+  const cut = side > artH ? Math.min(0.5, (side - artH) / 2 / side) : 0;
+  return { side, cut, span: side > 0 ? Math.min(1, artH / side) : 1 };
+}
+
 export function row({
   t,
   offline,
@@ -224,12 +218,9 @@ export function row({
   // show the art squashed.
   const band = bandOf(width, height);
   const artW = band.width;
-  // Everything below the header line: the poster fills what the words no longer take.
-  const artH = Math.max(0, height - HEAD_H - HEAD_GAP);
-  const side = Math.max(artW, artH);
-  // One native path for all three veils: `Path` is immutable geometry, so the same one is painted
-  // three times instead of being built three times.
-  const veil = fullRect();
+  const { side, cut, span } = artShape(width, height);
+  const artTop = -Math.round(cut * side);
+  const artLeft = Math.round((artW - side) / 2);
   const art = div()
     .id("media-art")
     .absolute()
@@ -239,51 +230,17 @@ export function row({
     .w(artW)
     .overflow_hidden()
     .when(Boolean(cover) && side > 0, (el) =>
-      el
-        .child(
-          image(cover)
-            .absolute()
-            .top(Math.round((artH - side) / 2))
-            .left(Math.round((artW - side) / 2))
-            .w(side)
-            .h(side)
-            .opacity(ART_OPACITY + (1 - ART_OPACITY) * artGain),
-        )
-        // Downward: nothing at the seam, the backdrop's own tone at the bottom, which is what takes
-        // the art to gone without covering the backdrop with a panel.
-        .child(
-          // `.bg()` takes a colour only, so a gradient has to stay a painted path here.
-          paint
-            .paint_path(veil, Background.linear_gradient(180, `${SCRIM}00`, SCRIM))
-            .absolute()
-            .top(FADE_TOP)
-            .left(0)
-            .right(0)
-            .bottom(0),
-        )
-        // Upward: a short veil at the very top, just enough that the poster does not start on a hard
-        // line under the header. Fixed px rather than a share: the blend should not grow with the row.
-        .child(
-          paint
-            .paint_path(veil, Background.linear_gradient(180, SCRIM, `${SCRIM}00`))
-            .absolute()
-            .top(0)
-            .left(0)
-            .right(0)
-            .h(TOP_FADE_PX),
-        )
-        // Under the skyline the art steps back so the dots and their colours are what the eye reads.
-        // One ramp, not a slab: it starts at nothing exactly where the band starts, so there is no
-        // edge to see, and arrives just short of solid at the foot.
-        .child(
-          paint
-            .paint_path(veil, Background.linear_gradient(180, `${SCRIM}00`, SCRIM).opacity(0.94))
-            .absolute()
-            .top(GRAPH_TOP)
-            .left(0)
-            .right(0)
-            .bottom(0),
-        ),
+      el.child(
+        // The dissolves are the art's own alpha — see `fade_top` and `fade_bottom` in store.py — so
+        // the poster goes to nothing over whatever it stands on, and no colour is painted here.
+        image(cover)
+          .absolute()
+          .top(artTop)
+          .left(artLeft)
+          .w(side)
+          .h(side)
+          .opacity(ART_OPACITY + (1 - ART_OPACITY) * artGain),
+      ),
     );
 
   // Layer 2: the skyline at the poster's foot. Both insets, not a height: a percentage height beside
@@ -296,7 +253,7 @@ export function row({
     .bottom(0)
     .child(sky.el(t, { ...band, levels, playing, offline }));
 
-  // The poster: the artwork, its two veils and the skyline, in the space under the header.
+  // The poster: the artwork and the skyline, in the space under the header.
   const poster = div()
     .flex_1()
     .relative()

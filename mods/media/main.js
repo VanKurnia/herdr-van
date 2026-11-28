@@ -17,7 +17,7 @@ import { View } from "gpui-kit";
 import { appHome, checking, layout, nextCommand, props, setShared, settings, theme, watchFolder, window, writeTextFile } from "herdr";
 import { readText, writeFile } from "./state.js";
 import { backoffMs, startHelper, stopHelper } from "./helper.js";
-import { row, bandOf, HEAD_PAD } from "./ui.js";
+import { row, bandOf, artShape, HEAD_PAD } from "./ui.js";
 import { Sky } from "./sky.js";
 
 const COMPACT_PX = 160; // below this the row is cover-only: no text, no bars
@@ -193,13 +193,20 @@ export default class Media extends View {
   // The art is drawn as a square as big as the taller of the band's width and the row's height, in
   // window px. Publishing that number is what lets the helper encode the cover at the size it is
   // actually drawn, so it is sharp at any sidebar width and zoom without shipping a full image.
-  wantsArt(px, cx) {
+  wantsArt(px, cut, shape_span, cx) {
     const want = Math.max(64, Math.min(512, Math.round(px / 8) * 8));
-    if (want === this.artPx) return;
+    // The only writer of this file, so a value that has not changed still has to go out once: a
+    // deleted art.json would otherwise leave the helper on its defaults for the rest of the session.
+    const share = Math.round(Math.max(0, Math.min(0.5, cut || 0)) * 1000) / 1000;
+    const span = Math.round(Math.max(0.05, Math.min(1, shape_span || 1)) * 1000) / 1000;
+    if (want === this.artPx && share === this.artCut && span === this.artSpan && this.artPublished) return;
     this.artPx = want;
+    this.artCut = share;
+    this.artSpan = span;
+    this.artPublished = true;
     if (this.parked || checking()) return;
     cx.spawn(async () => {
-      await writeTextFile(`${appHome()}/data/media/art.json`, JSON.stringify({ px: want }));
+      await writeTextFile(`${appHome()}/data/media/art.json`, JSON.stringify({ px: want, cut: share, span }));
     });
   }
 
@@ -492,7 +499,8 @@ export default class Media extends View {
         const h = Math.round(size.height / zoom);
         if (w === Math.round(this.width) && h === Math.round(this.height)) return;
         const before = this.wantsBars();
-    this.wantsArt(Math.round(Math.max(bandOf(w, h).width, h) * zoom), cx);
+        const shape = artShape(w, h);
+        this.wantsArt(Math.round(shape.side * zoom), shape.cut, shape.span, cx);
         this.width = w;
         this.height = h;
         // A width change is the only moment the answer can flip, so the beat goes out at once

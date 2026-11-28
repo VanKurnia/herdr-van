@@ -13,9 +13,65 @@ REPLACE_TRIES = 5  # a rename can lose to a reader on Windows; 4 waits of 20 ms 
 COVER_SETTLE_S = 6.0  # how long after a track change the artwork may still be on its way
 MAX_ART_PX = 512  # the row never draws the art bigger than this
 MIN_ART_PX = 64
+TOP_FADE_SHARE = 0.06  # the blend under the header, as a share of the art's own height
+# The two downward veils the row used to paint, now baked into the alpha instead: from this share of
+# the poster the art dissolves out, and under the skyline band it steps back further. Painted, they
+# ended on a colour (#0a0a19) that only matched the tokyo wallpaper; as alpha they end on nothing,
+# so whatever the row stands on shows through.
+FADE_FROM = 0.30  # where the art starts dissolving out, as a share of the poster's height
+SKY_FROM = 0.70  # where the skyline band begins
+SKY_VEIL = 0.94  # how far the art steps back under it
 
 
-def shrink_cover(data, px):
+def fade_bottom(picture, cut, span):
+    """Bake the row's two downward veils into the art's alpha, in the poster's own coordinates.
+
+    `cut` and `span` describe where the poster's clip meets the art: the art is drawn as a square
+    centred in the poster, so only the rows between `cut` and `cut + span` are ever seen. The ramps
+    are placed on that visible band, not on the square, or they would land off the poster's foot.
+    """
+    from PIL import Image, ImageChops
+
+    width, height = picture.size
+    span = max(0.01, min(1.0, span))
+    ramp = Image.new("L", (1, height))
+    for y in range(height):
+        poster = (y / height - cut) / span  # 0 at the poster's top, 1 at its foot
+        level = 1.0
+        if poster > FADE_FROM:
+            level *= 1 - min(1.0, (poster - FADE_FROM) / (1 - FADE_FROM))
+        if poster > SKY_FROM:
+            level *= 1 - SKY_VEIL * min(1.0, (poster - SKY_FROM) / (1 - SKY_FROM))
+        ramp.putpixel((0, y), max(0, min(255, round(level * 255))))
+    mask = ramp.resize((width, height), Image.NEAREST)
+    picture.putalpha(ImageChops.multiply(picture.getchannel("A"), mask))
+
+
+def fade_top(picture, cut, share):
+    """Take the art's top edge to transparent over `share` of its height, starting past `cut`.
+
+    A real alpha ramp, not a scrim: the poster dissolves into whatever it stands on — the wallpaper
+    of the moment, grid and all — so no backdrop colour has to be guessed here and nothing goes
+    stale when the wallpaper follows the cover. The kit's own way of doing this would be a band of
+    clipped copies, but an image whose top leaves its clip parent is culled, so the ramp is baked in
+    once, here, and the row draws a single translucent image.
+
+    `cut` is the share of the square the poster's edge hides (a cover wider than the poster is
+    centred, so its first rows sit above the clip): the ramp starts there, where it can be seen.
+    """
+    from PIL import Image, ImageChops
+
+    width, height = picture.size
+    skip = max(0, min(height - 1, round(height * max(0.0, cut))))
+    rows = max(1, min(height - skip, round(height * share)))
+    # A vertical ramp for those rows only: 0 at the very top of the visible art, 255 where it ends.
+    ramp = Image.linear_gradient("L").resize((width, rows), Image.BILINEAR)
+    strip = picture.crop((0, skip, width, skip + rows))
+    strip.putalpha(ImageChops.multiply(strip.getchannel("A"), ramp))
+    picture.paste(strip, (0, skip))
+
+
+def shrink_cover(data, px, cut=0.0, span=1.0):
     """Re-encode the artwork at `px` on its longer side: the size the row draws it at."""
     if not data or not px:
         return data
@@ -28,6 +84,8 @@ def shrink_cover(data, px):
             picture = image.convert("RGBA")
             if max(picture.size) > px:
                 picture.thumbnail((px, px), Image.LANCZOS)
+            fade_top(picture, cut, TOP_FADE_SHARE)
+            fade_bottom(picture, cut, span)
             out = BytesIO()
             picture.save(out, format="PNG", optimize=True)
             return out.getvalue()
@@ -55,6 +113,8 @@ class Writer:
         self.cover_settle = 0.0  # monotonic deadline while late art is still worth re-reading
         self.raw_cover = None  # the bytes the player gave us, kept so a resize needs no re-read
         self.art_px = 0  # the pixel size the current cover file was encoded at
+        self.art_cut = 0.0  # how much of the art's top that encode was told the poster hides
+        self.art_span = 1.0  # how much of the art's height that encode was told the poster shows
         self.audio_note = None  # why the audio path last failed, or None
 
     def stopping(self):
@@ -183,20 +243,32 @@ class Writer:
         return self.cover
 
     def art_wanted(self):
-        """The pixel size the row says it draws, written by the mod from the layout."""
+        """The pixel size, top cut and visible span the row draws, written by the mod from the layout."""
+        px, cut, span = 0, 0.0, 1.0
         try:
             with open(os.path.join(self.dir, "art.json"), "r", encoding="utf-8") as fh:
-                px = int(json.load(fh).get("px") or 0)
+                body = json.load(fh)
+            px = int(body.get("px") or 0)
+            cut = float(body.get("cut") or 0.0)
+            span = float(body.get("span") or 1.0)
         except Exception:
-            return 0
-        return max(MIN_ART_PX, min(MAX_ART_PX, px))
+            return 0, 0.0, 1.0
+        return (
+            max(MIN_ART_PX, min(MAX_ART_PX, px)),
+            max(0.0, min(0.5, cut)),
+            max(0.05, min(1.0, span)),
+        )
 
     def sync_art(self):
-        """Re-encode when that size changes; True when the published cover path changed."""
-        px = self.art_wanted()
-        if not px or px == self.art_px or self.raw_cover is None:
+        """Re-encode when that size or that geometry changes; True when the cover path changed."""
+        px, cut, span = self.art_wanted()
+        if not px or self.raw_cover is None:
+            return False
+        if px == self.art_px and cut == self.art_cut and span == self.art_span:
             return False
         self.art_px = px
+        self.art_cut = cut
+        self.art_span = span
         self.cover = self.save_cover(self.raw_cover)
         return True
 
@@ -204,9 +276,11 @@ class Writer:
         """Store cover art under a content-addressed name, encoded at the size the row draws."""
         if data is None:
             return None
-        px = self.art_px or self.art_wanted() or 0
+        px, cut, span = self.art_wanted()
         self.art_px = px
-        body = shrink_cover(data, px)
+        self.art_cut = cut
+        self.art_span = span
+        body = shrink_cover(data, px, cut, span)
         digest = hashlib.sha1(body).hexdigest()[:8]
         # The drawn size belongs in the name: a resize then lands on a new path, which is how the
         # view learns to reload it. With no known size it keeps the plain content-addressed name.
