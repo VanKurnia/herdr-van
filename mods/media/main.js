@@ -31,9 +31,11 @@ const STALE_RETRIES = 2; // relaunches before a helper that is up but wedged is 
 const OFFLINE_AFTER = 2; // failed launches before the row says why it is empty
 const PROTOCOL_V = 1; // the state.json shape this mod reads; mirrors store.py's PROTOCOL_V
 const AUDIO_WHY = "audio: "; // marks a reason the audio thread published, so a launcher's is never mistaken for one
-// state.json and a new cover are the only payloads worth re-reading: the watch
-// batches everything in the folder, including tick, beat, cmd and helper.lock.
+// The helper writes levels.json at most every 80 ms: a watch event is the read trigger, so a tick
+// that has nothing new reads nothing. state.json and the cover are the payloads the row re-reads;
+// levels.json is the stream; tick, beat, cmd and helper.lock are pulses nothing here acts on.
 const STATE_FILES = /^(state\.json|cover-[0-9a-f-]+\.png)$/;
+const LEVELS_FILE = /^levels\.json$/;
 
 // What launch.ps1 answers when it cannot start the helper. Anything else is a real error to quote.
 const REASON = {
@@ -111,11 +113,10 @@ export default class Media extends View {
         if (name === "prev" || name === "toggle" || name === "next") this.send(name, cx);
       }
     });
-    // One clock for the row: the levels tick also advances the sparks, so a beat is described once
-    // per 80 ms instead of by two timers racing each other for the same frame. A still skyline
-    // notifies nothing at all, which is what GPUI's notify-on-change contract asks for.
+    // One clock for the row: this tick advances the sky and draws it; it does not read the level
+    // file, because the watch does that when the helper actually writes. A reading that would paint
+    // the frame already on screen asks for nothing.
     cx.timer.every(LEVELS_MS, (cx) => {
-      this.readLevels(cx);
       if (!this.presenting()) return;
       this.skyMoving = this.sky.frame();
       if (this.skyMoving) cx.notify();
@@ -131,16 +132,19 @@ export default class Media extends View {
       // redraw costs the same as a visible one.
       if (this.state?.playing && this.presenting()) cx.notify();
     });
-    // state.json and a new cover are the only reasons to re-read the payload: levels.json,
-    // tick, beat, cmd and helper.lock arrive in the same batches. Watch paths are absolute
-    // with a `\\?\` prefix, so compare basenames only.
+    // state.json, the cover and a new levels.json are the reasons to re-read something: tick, beat,
+    // cmd and helper.lock arrive in the same batches. Watch paths are absolute with a `\\?\` prefix,
+    // so compare basenames only. Reading levels on the write instead of on a clock is what makes the
+    // stream event-driven: no tick reads a file the helper did not just write.
     cx.spawn(async (cx) => {
       const dir = `${appHome()}/data/media`;
       const base = (p) => p.split(/[\\/]/).pop();
       for (;;) {
         const changed = await watchFolder(dir);
         if (this.parked) continue; // parked: the watch still runs, nothing is read
-        if (changed.some((p) => STATE_FILES.test(base(p)))) this.read(cx);
+        const names = changed.map(base);
+        if (names.some((n) => STATE_FILES.test(n))) this.read(cx);
+        if (names.some((n) => LEVELS_FILE.test(n))) this.readLevels(cx);
       }
     });
   }
@@ -328,7 +332,8 @@ export default class Media extends View {
   }
 
   // Bars only move while a track plays, and only when the bars are on screen: a folded
-  // sidebar (< 160 px) does not draw them at all.
+  // sidebar (< 160 px) does not draw them at all. Called by a watch event for a new levels.json,
+  // not by the frame clock.
   readLevels(cx) {
     if (!this.active()) {
       // Nothing is being read, so the art settles back to rest instead of holding the last chorus.
@@ -358,8 +363,24 @@ export default class Media extends View {
       this.breathe();
       // Only ask for a frame when the sky is still: mid-flight, the frame clock draws within one
       // frame interval anyway, so a second notify per reading repaints the window for nothing.
-      if (!this.skyMoving) cx.notify();
+      // Still is not the same as changed, though: a reading that rounds to the same bars and the
+      // same art alpha would repaint the window with the picture it already shows. Compare what
+      // would be *painted* — one pixel per step of bar height, one step of opacity — and skip that.
+      const painted = this.painted();
+      const same = painted === this.paintedSig;
+      this.paintedSig = painted;
+      if (!this.skyMoving && !same) cx.notify();
     });
+  }
+
+  // What the next frame would draw, at the resolution the frame can show it: each band in whole
+  // pixels of bar height, the art's weight in whole 1/255 of opacity. Two readings that agree here
+  // are the same picture, so a notify would only repaint the window with what it already shows.
+  painted() {
+    const { width, height } = this.geom();
+    const barH = Math.max(1, bandOf(width, height).barH);
+    const bars = (this.levels ?? []).map((level) => Math.round((level ?? 0) * barH)).join(",");
+    return `${bars}|${Math.round(this.gain * 255)}|${this.state?.playing ? 1 : 0}`;
   }
 
   // Whether the row has sound to draw: playing, on screen, and wide enough to show the bars at all.

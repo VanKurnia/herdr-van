@@ -28,6 +28,7 @@ const BASE_THEME = "tokyo-night"; // the theme to come back to
 const BASE_WALLPAPER = "backgrounds/tokyo-grid.png";
 const FLAG = "herdr-media-pywal.disabled"; // sticky: the user turned it off
 const POLL_MS = 5000;
+const DEBOUNCE_MS = 400; // a burst of track changes (skipping) must not run python once per track
 
 // The payload a palette is made from. The helper also writes `beat`, `tick` and `levels.json` twelve
 // times a second; a watch batch carrying only those has nothing to say about colours.
@@ -179,9 +180,18 @@ export default class MediaPywal extends View {
       return;
     }
 
+    // Debounce and staleness in one mechanism: skipping five tracks in a row runs python once, and a
+    // generation that finishes after the track changed again is dropped instead of painting the
+    // cover the user already left.
+    const token = (this.token ?? 0) + 1;
+    this.token = token;
+    await cx.sleep(DEBOUNCE_MS);
+    if (token !== this.token) return; // another cover arrived while this one was settling
+
     this.busy = true;
     try {
       const result = await this.generate(cx, cover, state);
+      if (token !== this.token) return; // the track moved on while the palette was being built
       if (!result?.ok) {
         this.problem = result?.error ?? "generation failed";
         console.log(`herdr-media-pywal: ${this.problem}`);
