@@ -72,13 +72,25 @@ puts that on `sys.path` itself, so it runs under a plain `python`.
 
 ## Watch out
 
+- **A new mod folder docks itself into the shown layout.** Creating `mods/<name>/` (even with
+  `"place": "none"` in its `mod.json`) makes the app add a block for it to the layout you are looking
+  at — a 320 px column, in this layout's case, which reads as "empty space on the right" until the
+  folder is deleted and the block removed. Make throwaway probes as *files* inside an existing folder,
+  not as new mod folders.
+- **`fs.appendFile` does not exist** in the sandbox's `fs/promises`; it is `undefined`, so an append
+  inside a `catch {}` fails silently. `writeFile` works. The log here keeps its lines in memory and
+  rewrites the file.
+- **`cx.timer.every` dies with its callback.** One throw inside a timer callback and that timer never
+  fires again — the mod then looks alive (no error, `check` passes) while doing nothing. The polling
+  here is a `cx.spawn` loop with every pass caught, so one bad generation cannot stop the colours.
 - **`window` is shadowed by a global.** The shell installs `window` (the gpui `Window` object, for
-  `window.localStorage`), and it wins over `import { window } from "herdr"`: the call throws
-  `not a function`. Import it aliased — `window as appWindow` — or the mod dies silently at its
-  first `appWindow()` use. `gpui-kit`'s `Window` has no `visible`, only `is_window_active()` (focus),
-  so herdr's function is the only presentation signal there is.
+  `window.localStorage`), and the global wins over `import { window } from "herdr"`: the call throws
+  `not a function`. Import it aliased — `window as appWindow`. `gpui-kit`'s `Window` has no `visible`,
+  only `is_window_active()` (focus), so herdr's function is the only presentation signal there is —
+  and this mod no longer asks, because a window nobody can see is no reason to stop following music.
 - The wallpaper is written under a **new name** every time and the older ones are deleted: the app's
-  image cache is keyed by path, so reusing a name would serve a stale picture.
+  image cache is keyed by path, so reusing a name would serve a stale picture. Never run `pywal.py` by
+  hand while the mod is live: it prunes the wallpaper the layout currently points at.
 - The tone match is what makes the pair coherent: this layout draws terminals and sidebar transparent
   (`terminal_opacity: 0`), so the wallpaper *is* the window's background. Its flat band is moved to
   the theme's background lightness (measured: `#161c28` on both).

@@ -13,13 +13,18 @@
 // The base theme and the base wallpaper are never touched. `tokyo-night` and the base wallpaper are
 // what "off" means, and they are restored as paths, not as regenerated colours.
 import { View } from "gpui-kit";
+import * as nfs from "fs/promises";
 // The shell installs a global `window` (the gpui Window object: `window.localStorage`, its dialogs),
 // and that global shadows an import of the same name — `import { window }` yields the object, so
 // calling it throws "not a function". The alias is what makes herdr's presentation signal reachable
 // at all; gpui-kit's Window has no `visible`, only `is_window_active()`, which is focus.
+// The shell installs a global `window` (the gpui Window object: `window.localStorage`, its dialogs),
+// and that global shadows an import of the same name — `import { window } from "herdr"` yields the
+// object, so calling it throws "not a function". This mod no longer asks the window anything (its
+// visibility is not a reason to stop following the music), so the alias is gone with the question.
 import {
   appHome, checking, exec, layout, nextCommand, notify, readTextFile, run, shared, watchFolder,
-  window as appWindow, writeTextFile,
+  writeTextFile,
 } from "herdr";
 
 const STATE = "data/media/state.json"; // the media mod's contract: title, playing, cover
@@ -71,11 +76,21 @@ export default class MediaPywal extends View {
     this.watch = null; // the pending folder watch, kept so close() can release it
     this.disabled = localStorage.getItem(FLAG) === "1";
     if (checking()) return;
+    this.log(`init: following covers; log at ${dataDir()}/log.txt`);
     cx.spawn((cx) => this.observe(cx));
-    // A tick that does nothing while the window is not presenting: the work is paused, not the
-    // timer, so the first tick after the window comes back is what catches up.
-    cx.timer.every(POLL_MS, (cx) => {
-      if (this.presenting()) this.sync(cx);
+    // A loop, not a timer: a callback that throws takes its timer with it, and this mod has already
+    // died that way once. Every pass is caught, so one bad generation cannot stop the colours for
+    // the rest of the session, and each failure is written down instead of vanishing into a console
+    // that only a check reads. The watch is the fast path; this is the fallback that always runs.
+    cx.spawn(async (cx) => {
+      for (;;) {
+        try {
+          await this.sync(cx);
+        } catch (error) {
+          await this.log(`sync threw: ${error?.message ?? error}`);
+        }
+        await cx.sleep(POLL_MS);
+      }
     });
     cx.spawn(async (cx) => {
       for (;;) {
@@ -97,12 +112,13 @@ export default class MediaPywal extends View {
   // dropped: watching a folder is cheap, reacting to every beat it writes is not.
   async observe(cx) {
     for (;;) {
-      if (this.presenting()) this.sync(cx);
       try {
         this.watch = watchFolder(`${home()}/data/media`);
         const changed = await this.watch;
         this.watch = null;
-        if (changed.some((path) => PAYLOAD.test(String(path))) && this.presenting()) this.sync(cx);
+        if (changed.some((path) => PAYLOAD.test(String(path)))) {
+          await this.sync(cx).catch((error) => this.log(`sync threw: ${error?.message ?? error}`));
+        }
       } catch {
         // Nothing to watch yet, or the watch was reclaimed: wait, then try again.
         this.watch = null;
@@ -111,10 +127,10 @@ export default class MediaPywal extends View {
     }
   }
 
-  // False while the window is minimized, hidden or covered: work that only paints a window nobody
-  // can see can wait for the tick after it comes back.
   presenting() {
-    return appWindow()?.visible !== false;
+    // Not a gate on detection: the window's own visibility is no reason to stop following the
+    // music, which is the whole feature. Detection runs whether or not anything is on screen.
+    return true;
   }
 
   // The watch is the only thing this copy holds. Cancel it on close so the next copy is not
@@ -134,6 +150,18 @@ export default class MediaPywal extends View {
       body: this.disabled ? "Back to the base theme and wallpaper." : "The next cover repaints the window.",
     });
     this.sync(cx);
+  }
+
+  // One line per event, appended under the mod's data folder. `console.log` goes nowhere a person
+  // can look, and this mod has now died twice while looking healthy from outside (errors empty,
+  // check passing). A trace on disk is the difference between a diagnosis and a guess.
+  log(line) {
+    const file = `${dataDir()}/log.txt`;
+    this.lines = [...(this.lines ?? []), `${new Date().toISOString().slice(0, 19)} ${line}`].slice(-200);
+    this.chain = (this.chain ?? Promise.resolve()).then(() =>
+      nfs.writeFile(file, `${this.lines.join("\n")}\n`, "utf8").catch(() => {}),
+    );
+    return this.chain;
   }
 
   async sync(cx) {
@@ -194,15 +222,16 @@ export default class MediaPywal extends View {
       if (token !== this.token) return; // the track moved on while the palette was being built
       if (!result?.ok) {
         this.problem = result?.error ?? "generation failed";
-        console.log(`herdr-media-pywal: ${this.problem}`);
+        await this.log(`generation failed for ${cover}: ${this.problem}`);
         return;
       }
       await this.paint(cx, result);
       this.applied = cover;
       this.problem = null;
+      await this.log(`applied ${result.digest ?? cover} (${state?.title ?? ""})`);
     } catch (error) {
       this.problem = String(error?.message ?? error);
-      console.log(`herdr-media-pywal: ${this.problem}`);
+      await this.log(`threw for ${cover}: ${this.problem}`);
     } finally {
       this.busy = false;
     }
