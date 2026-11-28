@@ -3,24 +3,28 @@
 import { div, image, svg, PathBuilder, Background } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 
-const ART_OPACITY = 0.42; // the art's floor: with the voice breathing it, 0.5 gain rests near 0.71
+const ART_OPACITY = 0.5; // the art's floor: with the voice breathing it, 0.5 gain rests near 0.75
+const HEAD_H = 24; // the sidebar's section titles are 11 px in a 24 px row
+const HEAD_GAP = 6; // air between that row and the poster, so the poster is not part of the title
 const PAD_X = 0; // the poster runs edge to edge: it no longer lines up with the lists' 8px gutter
 const FADE_TOP = "30%"; // where the artwork starts dissolving out
-const TOP_FADE_SHARE = 0.134; // 36 of the row's 268 px: the two word lines, top to bottom
+const TOP_FADE_PX = 15; // the veil under the header: a short blend, not a haze over the portrait
 // The fades paint the tone of the backdrop the row stands on, not a panel colour: this build has no
 // mask, so a fade that is both smooth and free of a slab has to end in that tone.
 const SCRIM = "#0a0a19";
 const GRAPH_SHARE = 0.3; // the skyline's band: this much of the poster's height, at its foot
 const GRAPH_TOP = `${((1 - GRAPH_SHARE) * 100).toFixed(1)}%`; // where that band starts
 
+// The header's own width has to give the label's box: px(10) twice, the icon, two gaps and the rule's
+// 12 px floor. Measured from the header so a short title cannot leave a stale, too-narrow box behind.
+export const HEAD_PAD = 58;
+
 // The skyline's box: inside the poster's side gutter, at its foot. The row lays out from these
-// numbers and the skyline draws from the same ones.
+// numbers and the skyline draws from the same ones, both measured below the header line.
 export const bandOf = (width, height) => ({
   width: Math.max(0, width - PAD_X * 2),
-  barH: height * GRAPH_SHARE,
+  barH: Math.max(0, height - HEAD_H - HEAD_GAP) * GRAPH_SHARE,
 });
-
-const ICONS = "mods/media/icons/";
 
 // A filled rect over whatever box it is given: the fades are painted paths, not a background with
 // stops, because `Background.stop` percentages are ignored in this build and render flat.
@@ -110,19 +114,12 @@ export function blend(from, to, k) {
 }
 
 // 1:23, or 1:02:03 past the hour.
-function clock(seconds) {
+export function clock(seconds) {
   const at = Math.max(0, Math.round(seconds));
   const hours = Math.floor(at / 3600);
   const minutes = Math.floor((at % 3600) / 60);
   const rest = String(at % 60).padStart(2, "0");
   return hours ? `${hours}:${String(minutes).padStart(2, "0")}:${rest}` : `${minutes}:${rest}`;
-}
-
-// Nothing until the player reports a timeline or we have counted one: a length alone is the whole
-// clock, a position alone is how long this track has been going.
-function clockText(pos, dur) {
-  if (!(dur > 0)) return pos > 0 ? clock(pos) : "";
-  return pos > 0 ? `${clock(pos)} / ${clock(dur)}` : clock(dur);
 }
 
 // The band tones, as one function of position: each column takes the colour of the register it
@@ -137,44 +134,89 @@ export function row({
   t,
   offline,
   playing,
-  session,
   title,
   subtitle,
   hint,
   cover,
   artGain = 0.5,
   levels,
-  pos,
-  dur,
-  transport,
   hovered,
+  marquee = { travel: 0, period: 4000 },
   width,
   height,
   sky,
-  onPrev,
-  onToggle,
-  onNext,
   onSize,
   onHover,
+  onText,
+  onHeader,
 }) {
-  const time = clockText(pos, dur);
   const paint = globalThis.window;
+  // The header carries the words the poster used to: the song while the pointer is away, the artist
+  // under it. Same type as the sidebar's section titles, so the row reads as part of the list.
+  const label = hovered && subtitle ? subtitle : title;
 
-  // The icon brightens with the row's text colour on hover, so it is set on the button.
-  const button = (id, icon, onClick) =>
-    div()
-      .id(`media-${id}`)
-      .size(18)
-      .flex_none()
-      .flex()
-      .items_center()
-      .justify_center()
-      .rounded(4)
-      .cursor_pointer()
-      .text_color(t.muted)
-      .hover((s) => s.bg(t.hover).text_color(t.foreground))
-      .on_click((_event, cx) => onClick(cx))
-      .child(svg(ICONS + icon).size(12));
+  // The label gives way to the rule when it is long: the clip takes what the text needs, the text is
+  // measured by an invisible copy laid out at its natural width, and only an overflow travels.
+  const titleClip = div()
+    .id("media-title")
+    .flex_shrink(1)
+    .min_w(0)
+    .h(HEAD_H)
+    .overflow_hidden()
+    // While it overflows, the clip is pinned to the width the header gave it: the travelling copy is
+    // absolute, and an absolute child would otherwise leave the clip with no width of its own.
+    .when(marquee.travel > 0, (el) => el.w(marquee.box))
+    // Absolute, so nothing stretches it: in flow the parent's width becomes the child's, and the
+    // label would report the clip's size back as its own.
+    .child(
+      div()
+        .absolute()
+        .top(0)
+        .left(0)
+        .opacity(0)
+        .whitespace_nowrap()
+        .on_size_change((size, cx) => onText(size.width, cx))
+        .child(label),
+    )
+    // Fits: drawn in flow, nothing moves. Overflows: a copy travels left to its end and back, which is
+    // the only motion the host animates for `left`.
+    .when(marquee.travel === 0, (el) => el.child(div().whitespace_nowrap().child(label)))
+    .when(marquee.travel > 0, (el) =>
+      el.child(
+        div()
+          .id("media-title-run")
+          .absolute()
+          .top(0)
+          .bottom(0)
+          .left(0)
+          .flex()
+          .items_center()
+          .whitespace_nowrap()
+          .loop("left", {
+            from: 0,
+            to: -marquee.travel,
+            period: marquee.period,
+            easing: "linear",
+          })
+          .child(label),
+      ),
+    );
+
+  const header = h_flex()
+    .id("media-header")
+    .flex_none()
+    .h(HEAD_H)
+    .px(10)
+    .gap(6)
+    .items_center()
+    .text_size(11)
+    .font_semibold()
+    .text_color(t.accent)
+    .when(Boolean(hint), (el) => el.tooltip(hint))
+    .on_size_change((size, cx) => onHeader(size.width, cx))
+    .child(svg("mods/media/music.svg").size(14).flex_none().text_color(t.accent))
+    .child(titleClip)
+    .child(div().flex_1().min_w(12).h(1).bg(`${t.accent}55`));
 
   // Layer 1: the artwork edge to edge as a tint, dissolving out under the top edge where the words
   // sit and again from the seam down to its foot. Cover fit, done by hand: one square, sized to the
@@ -182,7 +224,9 @@ export function row({
   // show the art squashed.
   const band = bandOf(width, height);
   const artW = band.width;
-  const side = Math.max(artW, height);
+  // Everything below the header line: the poster fills what the words no longer take.
+  const artH = Math.max(0, height - HEAD_H - HEAD_GAP);
+  const side = Math.max(artW, artH);
   // One native path for all three veils: `Path` is immutable geometry, so the same one is painted
   // three times instead of being built three times.
   const veil = fullRect();
@@ -199,7 +243,7 @@ export function row({
         .child(
           image(cover)
             .absolute()
-            .top(Math.round((height - side) / 2))
+            .top(Math.round((artH - side) / 2))
             .left(Math.round((artW - side) / 2))
             .w(side)
             .h(side)
@@ -217,8 +261,8 @@ export function row({
             .right(0)
             .bottom(0),
         )
-        // Upward: the same tone at the top edge so two lines of words sit on it, then empty before a
-        // third of the way down.
+        // Upward: a short veil at the very top, just enough that the poster does not start on a hard
+        // line under the header. Fixed px rather than a share: the blend should not grow with the row.
         .child(
           paint
             .paint_path(veil, Background.linear_gradient(180, SCRIM, `${SCRIM}00`))
@@ -226,7 +270,7 @@ export function row({
             .top(0)
             .left(0)
             .right(0)
-            .h(height * TOP_FADE_SHARE),
+            .h(TOP_FADE_PX),
         )
         // Under the skyline the art steps back so the dots and their colours are what the eye reads.
         // One ramp, not a slab: it starts at nothing exactly where the band starts, so there is no
@@ -252,72 +296,20 @@ export function row({
     .bottom(0)
     .child(sky.el(t, { ...band, levels, playing, offline }));
 
-  // Layer 3: the words. The title and artist sit at the top left, two lines; the clock and the
-  // transport at the top right, which the pointer brings in. Both are always laid out and only their
-  // ink appears, so nothing shifts when the pointer arrives.
-  const detailsLayer = h_flex()
-    .absolute()
-    .top(0)
-    .left(0)
-    .right(0)
-    .px(12)
-    .pt(8)
-    .gap(8)
-    .items_start()
-    .justify_between()
-    .child(
-      v_flex()
-        .flex_1()
-        .min_w(0)
-        .items_start()
-        .gap(1)
-        .child(
-          div()
-            .max_w_full()
-            .truncate()
-            .text_size(12)
-            .line_height("14px")
-            .text_color(offline || !session ? t.dim : playing ? t.foreground : t.muted)
-            .child(title),
-        )
-        .when(Boolean(subtitle), (el) =>
-          el.child(
-            div()
-              .max_w_full()
-              .truncate()
-              .text_size(10.5)
-              .line_height("13px")
-              .text_color(t.accent)
-              .child(subtitle),
-          ),
-        ),
-    )
-    .child(
-      v_flex()
-        .flex_none()
-        .items_end()
-        .gap(2)
-        .opacity(hovered ? 1 : 0)
-        .transition("opacity", { duration: 140, easing: "ease-out" })
-        .when(Boolean(time), (el) =>
-          el.child(div().text_size(10).text_color(t.muted).child(time)),
-        )
-        .when(Boolean(transport), (el) =>
-          el.child(
-            h_flex()
-              .items_center()
-              .gap(2)
-              .child(button("prev", "prev.svg", onPrev))
-              .child(button("toggle", playing ? "pause.svg" : "play.svg", onToggle))
-              .child(button("next", "next.svg", onNext)),
-          ),
-        ),
-    );
+  // The poster: the artwork, its two veils and the skyline, in the space under the header.
+  const poster = div()
+    .flex_1()
+    .relative()
+    .min_h(0)
+    .overflow_hidden()
+    .child(art)
+    .child(graph);
 
   return div()
     .id("media")
     .size_full()
-    .relative()
+    .flex()
+    .flex_col()
     .overflow_hidden()
     // The poster's top corners are rounded like the rows above it, and the clip carries the artwork
     // and the skyline into that shape.
@@ -325,8 +317,7 @@ export function row({
     .rounded_tr(6)
     .on_size_change((size, cx) => onSize(size, cx))
     .on_hover((on, cx) => onHover(on, cx))
-    .when(Boolean(hint), (el) => el.tooltip(hint))
-    .child(art)
-    .child(graph)
-    .child(detailsLayer);
+    .child(header)
+    .child(div().flex_none().h(HEAD_GAP))
+    .child(poster);
 }

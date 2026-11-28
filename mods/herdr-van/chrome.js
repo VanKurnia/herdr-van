@@ -3,6 +3,15 @@ import { h_flex, v_flex } from "gpui-base";
 import { theme, run, props, window, updates, exec, readTextFile, watchFolder, appHome, shared, setShared, checking } from "herdr";
 import { claimSidebarHover, findBlock, narrow, onSidebar, toggleSidebar } from "./lib.js";
 
+// 1:23, or 1:02:03 past the hour: the footer has room for the elapsed time only.
+const clock = (seconds) => {
+  const at = Math.max(0, Math.round(seconds || 0));
+  const hours = Math.floor(at / 3600);
+  const minutes = Math.floor((at % 3600) / 60);
+  const rest = String(at % 60).padStart(2, "0");
+  return hours ? `${hours}:${String(minutes).padStart(2, "0")}:${rest}` : `${minutes}:${rest}`;
+};
+
 // ── Brand config ─────────────────────────────────────────────
 // The name lives in herdr-van-config.json at the Herdr home root
 // ({"brand": {"name": "..."}}). Empty = this computer's username
@@ -93,6 +102,16 @@ export default class Chrome {
       // now-playing toggle is left out there for the same reason.
       const media = findBlock("media");
       const mediaOn = Boolean(media) && !media.hidden;
+      // The media mod publishes what its transport draws: this footer cannot read its payload.
+      const now = shared("media.now");
+      const playing = mediaOn && now?.session && !now.stale;
+      const transport = playing
+        ? h_flex().id("media-transport").flex_none().items_center().gap(0)
+          .child(div().pr(4).text_size(10).text_color(t.muted).child(clock(now.pos)))
+          .child(this.button("media-prev", svg("mods/media/icons/prev.svg").size(11), () => run("media.prev")))
+          .child(this.button("media-toggle", svg(`mods/media/icons/${now.playing ? "pause" : "play"}.svg`).size(11), () => run("media.toggle")))
+          .child(this.button("media-next", svg("mods/media/icons/next.svg").size(11), () => run("media.next")))
+        : null;
       const nowPlaying = h_flex().id("media-toggle").size(28).flex_none().flex().items_center().justify_center().rounded(8)
         .text_color(mediaOn ? t.accent : t.muted).cursor_pointer()
         .tooltip(mediaOn ? "Turn the now-playing row off" : "Turn the now-playing row on")
@@ -116,7 +135,9 @@ export default class Chrome {
           .when(!collapsed, el => el.child(nowPlaying))
           .child(gear)
           .child(div().flex_1())
-          .when(armed && !collapsed, el => el.child(badge)));
+          // One slot at the right end: the prefix badge while a key is expected, the transport otherwise.
+          .when(armed && !collapsed, el => el.child(badge))
+          .when(Boolean(transport) && !armed && !collapsed, el => el.child(transport)));
     }
     // The brand's buttons are drawn only while the pointer is on the sidebar.
     const side = onSidebar();

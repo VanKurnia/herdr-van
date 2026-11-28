@@ -14,10 +14,10 @@
 // helper.js, the row's pixels are ui.js.
 
 import { View } from "gpui-kit";
-import { appHome, checking, layout, props, settings, theme, watchFolder, window, writeTextFile } from "herdr";
+import { appHome, checking, layout, nextCommand, props, setShared, settings, theme, watchFolder, window, writeTextFile } from "herdr";
 import { readText, writeFile } from "./state.js";
 import { backoffMs, startHelper, stopHelper } from "./helper.js";
-import { row, bandOf } from "./ui.js";
+import { row, bandOf, HEAD_PAD } from "./ui.js";
 import { Sky } from "./sky.js";
 
 const COMPACT_PX = 160; // below this the row is cover-only: no text, no bars
@@ -88,6 +88,9 @@ export default class Media extends View {
     this.launchFailures = 0;
     this.why = null; // why the helper is not answering: a launcher reason, or no answer at all
     this.parked = false;
+    this.nowBody = null; // the transport body last published for the footer
+    this.headW = 0; // the header row, in window px: what the label's box is cut from
+    this.textW = 0; // the label unclipped, which is what says how far it has to travel
     // Whether the sky is mid-motion, so a level reading need not ask for a frame of its own.
     this.skyMoving = false;
     // What moves above the columns — sparks, peak caps, landings — has to outlive a render, so it
@@ -98,6 +101,16 @@ export default class Media extends View {
     if (!this.parked) this.spawnHelper(cx);
     this.read(cx); // a reload starts on an empty payload; a settled track writes nothing
     cx.timer.every(5000, (cx) => this.alive(cx));
+    // The sidebar footer draws the transport, and it cannot read this mod's payload: the few numbers it
+    // needs are published here, once a second, and only when they change.
+    cx.timer.every(1000, () => this.publishNow());
+    // "prev" | "toggle" | "next", from the footer's buttons.
+    cx.spawn(async (cx) => {
+      for (;;) {
+        const name = await nextCommand();
+        if (name === "prev" || name === "toggle" || name === "next") this.send(name, cx);
+      }
+    });
     // One clock for the row: the levels tick also advances the sparks, so a beat is described once
     // per 80 ms instead of by two timers racing each other for the same frame. A still skyline
     // notifies nothing at all, which is what GPUI's notify-on-change contract asks for.
@@ -382,6 +395,46 @@ export default class Media extends View {
     this.gain += (target - this.gain) * step;
   }
 
+  // Where the track is now: the player's own position, corrected by the time since it was sampled, or
+  // the time since it appeared when the player reports no position at all (streams often send zero).
+  position() {
+    const reported = Number(this.state?.pos) || 0;
+    if (reported > 0) return elapsedPos(reported, this.state?.playing ? Date.now() - this.posAt : 0);
+    return this.state?.playing && this.clockAt ? (Date.now() - this.clockAt) / 1000 : 0;
+  }
+
+  // What the footer's transport draws, in the one place both mods can read. Buttons the helper would
+  // ignore are worse than none, so an outdated payload publishes itself as idle.
+  publishNow() {
+    const now = {
+      session: Boolean(this.state?.session),
+      playing: Boolean(this.state?.playing),
+      stale: Boolean(this.state) && this.state.v !== PROTOCOL_V,
+      pos: Math.round(this.position()),
+      dur: Math.round(Number(this.state?.dur) || 0),
+    };
+    const body = JSON.stringify(now);
+    if (body === this.nowBody) return;
+    this.nowBody = body;
+    setShared("media.now", now);  }
+
+  // A label too long for the header scrolls itself; one that fits sits still. The travel is the
+  // measured overflow of the box the header actually offers, and the pass is slow enough to read.
+  marquee() {
+    const zoom = settings().zoom || 1;
+    const box = Math.max(40, Math.round(this.headW / zoom) - HEAD_PAD);
+    const travel = Math.max(0, Math.round(this.textW / zoom) - box);
+    return { travel, box, period: Math.max(4000, Math.round(travel * 70)) };
+  }
+
+  // The header measurements, in window px; a size that has not changed costs nothing.
+  measured(field, width, cx) {
+    const next = Math.round(width);
+    if (next === this[field]) return;
+    this[field] = next;
+    cx.notify();
+  }
+
   render(_cx) {
     const t = theme();
     const session = Boolean(this.state?.session);
@@ -410,41 +463,23 @@ export default class Media extends View {
     // Only the dependency case has an action worth carrying; the other two are already sentences.
     const hint = offline && this.why === "no-deps" ? PIP : "";
 
-    // A player that reports a position gets the row's own clock correction; one that reports none
-    // (streams often send 0 for both) gets the time since this track appeared.
-    const reported = Number(this.state?.pos) || 0;
-    const pos =
-      reported > 0
-        ? elapsedPos(reported, playing ? Date.now() - this.posAt : 0)
-        : playing && this.clockAt
-          ? (Date.now() - this.clockAt) / 1000
-          : 0;
-
-    // Buttons the helper would ignore are worse than none: an outdated payload has its own
-    // sentence in the row instead.
-    const transport = session && !offline && !stale;
-
     return row({
       t,
       offline,
       playing,
-      session,
       title,
       subtitle,
       hint,
       cover: this.state?.cover,
       artGain: this.gain,
       levels: this.levels,
-      pos,
-      dur: Number(this.state?.dur) || 0,
-      transport,
       hovered: this.hovered,
+      marquee: this.marquee(),
+      onText: (w, cx) => this.measured("textW", w, cx),
+      onHeader: (w, cx) => this.measured("headW", w, cx),
       width: this.width,
       height: this.height,
       sky: this.sky,
-      onPrev: (cx) => this.send("prev", cx),
-      onToggle: (cx) => this.send("toggle", cx),
-      onNext: (cx) => this.send("next", cx),
       onHover: (on, cx) => {
         if (on === this.hovered) return;
         this.hovered = on;
