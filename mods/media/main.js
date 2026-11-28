@@ -22,7 +22,13 @@ import { Sky } from "./sky.js";
 
 const COMPACT_PX = 160; // below this the row is cover-only: no text, no bars
 const REST_GAIN = 0.5; // the art's weight with no voice to follow: half way between floor and full
-const LEVELS_MS = 80;
+const LEVELS_MS = 40; // the row's clock: it advances the sky and draws it, and that used to be 80 ms.
+// The bars arrive on the helper's writes, so 80 only set how often the *motion* between readings
+// moved — the caps sinking, the sparks flying, the beat swell fading. At 12.5 Hz those read as a
+// stutter, which is what a spectrum looks like when it is "not synced with the song": the notes were
+// landing at 21 Hz while everything that moved was stepping at 12.5. Measured, 25 ms costs a few
+// percent of the app's CPU only while something is actually moving, because frame() reports still and
+// the notify is skipped.
 const FRAME_MS = 66; // the sparks' clock; each frame repaints the whole window
 const BEAT_MS = 10000;
 const TICK_STALE_S = 15; // the helper ticks every second

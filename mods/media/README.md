@@ -132,7 +132,20 @@ is supposed to be shaped. The single gain keeps a quiet master filling the row a
 ratios untouched (a test holds that), and it normalises with `HEADROOM` so the loudest band sits just
 under the top instead of clipping flat every time a kick lands.
 
-**The renderer draws the level, not a curve of it.** `sky.js` raised every column with `level ** 0.7`
+**Ten rows, and motion between the readings.** How alive a spectrum looks is set by two things that
+have nothing to do with the transform. A bar could only take eight heights in this row (`PITCH_Y = 6`),
+which reads as a staircase at any frame rate, so the pitch is 5 and there are ten. And the caps, the
+sparks and the beat swell advanced on an 80 ms clock — 12.5 Hz — while the notes landed at 21 Hz, which
+is exactly what "not synced with the song" looks like: the bars moved, and everything that moved
+between them stepped. The clock is 40 ms (25 Hz) and those decays are now scaled by the time that
+actually passed (`k = elapsed / 80`), so the faster clock makes them smoother instead of three times
+faster. 40 ms and not 25 ms because every frame repaints the window: measured, the app costs 38 % of a
+core at 80 ms, 47 % at 60, 53 % at 40 and 80 % at 25.
+
+**The fall is 150 ms, not 250.** Clocked, like the rise, and measured on a capture: shortening it from
+250 to 150 ms raises the number of dot changes per second by about a fifth, with the mix's shape
+untouched — the bars let go of a beat before the next one arrives.
+ `sky.js` raised every column with `level ** 0.7`
 and gave each column a floor of one dot, which is what made a correct spectrum still read as a row of
 equal bars: the gamma pulled quiet columns up toward the middle, and the floor made sure nothing was
 ever empty. The mapping is linear now, and a column with nothing in it is a gap. The row's height also
@@ -144,26 +157,26 @@ rather than assumed, and each one able to hide the others' cost:
 
 | stage | before | now |
 |---|---|---|
-| capture: how long a read blocks | 48.8 ms (`blocksize=2048`) | **10.8 ms** (`512`, into a rolling 2048 window) |
+| capture: how long a read blocks | 48.8 ms (`blocksize=2048`) | **23.2 ms** (`1024`, into a rolling 2048 window) |
 | analysis: how old a reading is | 46.4 ms | **23.2 ms** (`HOP = 1024`, 43 Hz) |
-| publish: how long a reading waits for a write | 94 ms median (80 ms floor) | **29 ms median** (18 ms floor, 41 Hz) |
+| publish: how long a reading waits for a write | 94 ms median | **46 ms median** (21.5 Hz, measured 24 Hz) |
 | write to the mod noticing it | 1.2 ms median, 5 ms max | unchanged |
 | paint | ≤ 16.7 ms | unchanged |
 
-End to end that is **~38 ms typical and ~79 ms worst**, from ~80 ms and ~165 ms. The window is still
+End to end that is **~50 ms typical and ~95 ms worst**, from ~80 ms and ~165 ms. The window is still
 2048 samples and the bands are still the same bands: what changed is that the wait for audio, the age
 of a reading and the resolution of a reading stopped being the same number.
 
-Two things this cost, both measured and both worth knowing. The publish floor must sit **below** the
-hop: at 25 ms against a 23.2 ms hop it dropped every second reading and the stream ran at 27 Hz, and
-dropping it to 18 ms put it at 41 Hz. And a 40 Hz stream is expensive to *write*: `_stream()` writes
-`levels.json` in place instead of through a temp file and a rename, because the atomic path measured
-9.0 % of a core at this rate against 4.3 % in place. The helper runs at **18-23 %** of a core, against
-14 % at 11 Hz — the price of a stream that arrives four times as often. A torn read is safe here and
-only here: the mod treats a body it cannot parse as "keep the last good reading".
+Three things this cost, all measured. A publish floor **above** the hop halves the cadence: at 25 ms
+against a 23.2 ms hop the stream ran at 27 Hz, not 43, so the floor is 30 ms and the stream is
+21.5 Hz on purpose. Reading 512-sample chunks was tried and reverted to 1024: it halved the age of a
+reading but cost 1.2 points of a core for 43 extra device calls a second, which is what kept the
+helper at 20-22 %. And a 21 Hz stream is expensive to *write*: `_stream()` writes `levels.json` in
+place rather than through a temp file and a rename, because the atomic path measured 9.0 % of a core
+at 40 Hz against 4.3 % in place. The helper now runs at **14-17 %** of a core.
 
-The floor of this design is not code: the shared-mode WASAPI engine period (~10 ms, which a 512-sample
-read mostly waits for) and one paint frame (~16.7 ms). Below ~25 ms would take exclusive-mode capture.
+The floor of this design is not code: the shared-mode WASAPI engine period (~10 ms, which a read
+mostly waits for) and one paint frame (~16.7 ms).
 
 Each file has one writer, because Herdr's `writeTextFile` is a read-modify-write
 that needs the content it expects to find. The mod's `beat` is a heartbeat: when

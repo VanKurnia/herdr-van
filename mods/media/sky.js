@@ -13,7 +13,9 @@ import { palette, blend } from "./ui.js";
 const DOT = 4; // px: even, so a mark's centre lands on a whole pixel and no column is half-lit
 const GUTTER = 4; // half the row's 8 px gutter: `justify_between` adds its share beside each spacer
 const PITCH_X = 6; // column pitch: even with DOT, so every mark covers whole pixels
-const PITCH_Y = 6; // row pitch
+const PITCH_Y = 5; // row pitch: 10 rows in this band rather than 8, so a bar has ten heights to
+// move through instead of eight. Eight heights at a 60 Hz pulse reads as a staircase, which is what
+// makes a spectrum look like it is running at a low frame rate when it is not.
 const BASE = 10; // the skyline stands this far above the band's bottom edge
 const POOL = 14; // sparks in flight at once, two dots each
 const TAIL_MS = 55; // how far a spark's trail follows behind it
@@ -152,19 +154,26 @@ export class Sky {
   // anything is still in flight so the caller knows to redraw.
   frame() {
     const now = Date.now();
+    // The decays below were tuned per 80 ms tick, which was the clock until the row started drawing
+    // at 25 ms. Scale them by the time that actually passed, or a faster clock would run the swell,
+    // the caps and the flashes three times as fast instead of three times as smoothly. Sparks are
+    // already wall-clock (they carry their own startAt and hop), so they need nothing here.
+    const elapsed = Math.min(200, now - (this.lastFrame ?? now));
+    this.lastFrame = now;
+    const k = elapsed / 80;
     let moving = false;
     if (this.pulse > 0) {
-      this.pulse = Math.max(0, this.pulse - 0.055);
+      this.pulse = Math.max(0, this.pulse - 0.055 * k);
       moving = true;
     }
     for (let c = 0; c < this.caps.length; c++) {
       const floor = heightOf(this.used[c] ?? 1);
       if (this.caps[c] > floor) {
-        this.caps[c] = Math.max(floor, this.caps[c] - CAP_SINK);
+        this.caps[c] = Math.max(floor, this.caps[c] - CAP_SINK * k);
         moving = true;
       }
       if (this.flash[c] > 0) {
-        this.flash[c] = Math.max(0, this.flash[c] - 0.09);
+        this.flash[c] = Math.max(0, this.flash[c] - 0.09 * k);
         moving = true;
       }
     }

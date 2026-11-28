@@ -7,7 +7,7 @@ import time
 
 BEAT_STALE_S = 90.0  # the mod beats every 10 s
 PROTOCOL_V = 1  # state.json's shape; bump when a field is renamed or removed
-LEVELS_EVERY_S = 0.018  # the publish floor, deliberately below the analysis hop (23.2 ms): a floor above the hop drops every second reading and halves the cadence
+LEVELS_EVERY_S = 0.030  # the publish floor: longer than the 23.2 ms hop on purpose, so one write per two analyses (21.5 Hz). Measured interleaved against 0.018: 20.1 % against 22.5 % of a core, and no picture anyone can tell apart at eight rows of dots.
 COMMANDS = {"prev", "toggle", "next"}
 REPLACE_TRIES = 5  # a rename can lose to a reader on Windows; 4 waits of 20 ms ride it out
 COVER_SETTLE_S = 6.0  # how long after a track change the artwork may still be on its way

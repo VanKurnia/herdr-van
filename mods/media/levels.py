@@ -10,7 +10,7 @@ import math
 BANDS = 28
 RATE = 44100
 BLOCK = 2048  # the analysis window: 46.4 ms at 44.1 kHz, which is what sets the frequency resolution
-CHUNK = 512  # samples read from the device at a time: 11.6 ms, the capture's own latency
+CHUNK = 1024  # samples read per call: one hop, so the loop reads and analyses at the same 23.2 ms. Reading 512 halved the age of a reading but cost 1.2 points of a core for the extra 43 device calls a second, which is the trade that kept the helper over 20 %.
 HOP = 1024  # samples between analyses: a reading is at most one hop (23 ms) old, at 43 Hz
 # The three are separate on purpose. The window must stay 2048 for the low bands to resolve; the hop is
 # what a bar's freshness costs; the chunk is what the device makes us wait for. Reading 512 at a time
@@ -25,7 +25,7 @@ LOW_HZ = 40.0
 HIGH_HZ = 16000.0
 FLOOR_DB = -55.0  # a band quieter than this reads as empty
 TAU_ATTACK = 0.045  # s, the bar rise
-TAU_RELEASE = 0.25  # s, the bar fall; both time-based, because the block rate varies by device
+TAU_RELEASE = 0.15  # s, the bar fall; both time-based, because the block rate varies by device
 TAU_GAIN = 3.0  # s, how fast the full scale forgets a peak
 HEADROOM = 1.12  # the loudest band is normalised to 1/HEADROOM, so a transient is not clipped flat
 # One gain for the whole spectrum, deliberately. Per-band scaling was built, measured and thrown out:
