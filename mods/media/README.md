@@ -111,6 +111,32 @@ slower half, so the bars still drop away rather than hanging. Both are clocked f
 per-block decay tied the fall to the device's block rate, so a track fell faster on a 48 kHz device
 than on a 44.1 kHz one, and a dropped block doubled the step.
 
+**What a band is.** Each band is the summed energy of its FFT bins, not its loudest bin. A maximum
+over a band is one bin's noise and depends on how many bins the band has, so the top of the spectrum
+read taller than its content and a bar could flicker on a single bin; a sum is what the band holds
+and does not flicker. The transform is zero-padded from the 2048-sample block to 4096, which halves
+the bin to 10.8 Hz, so the low bands land on the frequencies they claim instead of wherever rounding
+put them. One `numpy.add.reduceat` reduces all 28 bands at once.
+
+**No band may be narrower than the transform can resolve** (`MIN_BAND_BINS = 4`, ~43 Hz here). A Hann
+window's main lobe is four bins wide, so a 1/3-octave band at 60 Hz is not a measurement: a 60 Hz
+tone spanned six bands and the scaling below drew every one of them at full height. The bottom bands
+are now wider than pure log spacing would make them — coarser sub-bass bars, but honest ones.
+
+**Every band is scaled by its own peak** (`per_band()`): a blend of the passage's peak over 4 s and
+the song's over 90 s, with a floor so a band that never rises above `BAND_FLOOR` is not amplified
+from its own noise. Without it a mix's spectral tilt *is* the picture — the old maths drew a slope
+from 0.77 at 60 Hz to 0.28 at 14 kHz that no listener hears. The band sitting at its own reference
+peak is drawn at `BAND_TARGET` (0.72), not at the top, which is what leaves room for a chorus and
+keeps steady material (noise, a held pad) reading as the flat line it is rather than as a wall.
+
+Measured on one 8 s capture through both pipelines (`bench/visualizer/analyze.py`): the median band
+spread across the spectrum went from 0.50 to 0.24 on real music, and pink noise — equal energy per
+octave, which a correct analyser must draw flat — from 0.27 to 0.10. The analysis costs 32.6 ms of
+CPU per 7.94 s of audio (0.41 % of a core, against 0.37 % for the old maths): the helper's 13-16 % is
+nearly all capture, not arithmetic. `bench/visualizer/sweep.py` is how `FLOOR_DB` and `BAND_FLOOR`
+were picked, scoring tone leakage, pink flatness and music spread together instead of by taste.
+
 Each file has one writer, because Herdr's `writeTextFile` is a read-modify-write
 that needs the content it expects to find. The mod's `beat` is a heartbeat: when
 it goes 90 s stale the helper exits, which cleans up after a window that closed

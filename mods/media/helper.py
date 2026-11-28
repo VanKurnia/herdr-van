@@ -32,15 +32,16 @@ from winrt.windows.media.control import (  # noqa: E402
 )
 from winrt.windows.storage.streams import Buffer, InputStreamOptions  # noqa: E402
 from levels import (  # noqa: E402
-    BAND_RANGES,
+    BAND_EDGES,
     BANDS,
     BLOCK,
-    LOUDNESS,
+    FFT_SIZE,
     RATE,
     VOICE_BINS,
-    level,
+    band_level,
     envelope,
-    gain,
+    per_band,
+    smooth,
     voice_activity,
 )
 from store import Writer  # noqa: E402
@@ -132,7 +133,7 @@ def audio_loop(writer):
         writer.publish_audio_error("%s: %s" % (type(exc).__name__, exc))
         return
     levels = [0.0] * BANDS
-    drawn_peak = 1.0  # full scale, which is also what the first block draws with
+    peaks = None  # each band's (passage, song) peak, adopted from the first block
     voice_hist = []  # the vocal band's recent levels, for the syllabic cue
     score_hist = []  # the recent voice scores, for the median outlier filter
     last = time.monotonic()
@@ -163,14 +164,19 @@ def audio_loop(writer):
                     mono = block[:, 0] if block.ndim > 1 else block
                     if len(mono) < BLOCK:
                         continue  # a device can hand back a short first block
-                    spec = np.abs(np.fft.rfft(mono * window))
-                    fresh = [level(float(spec[a:b].max()) / LOUDNESS) for a, b in BAND_RANGES]
-                    levels = envelope(fresh, levels, dt)
+                    # Bands are summed energy over a zero-padded transform, not the loudest bin in
+                    # each: the sum is what the band holds and does not flicker between frames, and
+                    # the padding puts ten bins where the old geometry had one, so the low bands land
+                    # on the frequencies they claim. One reduceat call covers all 28 bands.
+                    power = np.abs(np.fft.rfft(mono * window, n=FFT_SIZE)) ** 2
+                    energy = np.add.reduceat(power, BAND_EDGES[:-1])
+                    fresh = [band_level(float(e)) for e in energy]
                     # Spectral flatness over the voice's own bins: low for anything pitched, high for
-                    # noise and cymbals. Cheap here, and it is the one cue the band levels cannot give.
-                    power = spec[VOICE_BINS[0] : VOICE_BINS[1]] ** 2 + 1e-12
-                    flatness = float(np.exp(np.mean(np.log(power))) / np.mean(power))
-                    score = voice_activity(levels, voice_hist, flatness, RATE / BLOCK)
+                    # noise and cymbals. The voice score sees the raw levels, because it is a share of
+                    # one band against the rest and the per-band scale below would flatten that share.
+                    voice_power = power[VOICE_BINS[0] : VOICE_BINS[1]] + 1e-12
+                    flatness = float(np.exp(np.mean(np.log(voice_power))) / np.mean(voice_power))
+                    score = voice_activity(fresh, voice_hist, flatness, RATE / BLOCK)
                     # The outlier filter the literature uses: a median over a handful of frames, so a
                     # single loud consonant does not read as a change of section.
                     score_hist.append(score)
@@ -178,10 +184,14 @@ def audio_loop(writer):
                     voice = float(np.median(score_hist))
                     if writer.audio_note is not None:  # recovered, so the row stops saying why
                         writer.publish_audio_error(None)
-                    # One gain for the whole spectrum, after the voice score has seen the raw levels:
-                    # the score is a share of one band against the rest, so it must not be normalised.
-                    drawn, drawn_peak = gain(levels, drawn_peak, dt)
-                    writer.publish_levels([round(v, 2) for v in drawn], voice)
+                    # Each band is scaled by its own recent peak, so a mix's spectral tilt stops being
+                    # the picture and every band can use the row's height. Enveloped after scaling, so
+                    # the rise and fall the eye sees is the same at any block rate.
+                    if peaks is None:
+                        peaks = [(value, value) for value in fresh]
+                    drawn, peaks = per_band(fresh, peaks, dt)
+                    levels = envelope(smooth(drawn), levels, dt)
+                    writer.publish_levels([round(v, 2) for v in levels], voice)
         except Exception as exc:  # no device yet, or the output device changed
             print("audio failed: %r" % (exc,), file=sys.stderr, flush=True)
             writer.publish_audio_error("%s: %s" % (type(exc).__name__, exc))

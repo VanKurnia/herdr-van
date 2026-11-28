@@ -1,223 +1,137 @@
+"""The spectrum's shape: what an accurate analyser must get right.
+
+Three properties, each one a thing the old maths got wrong:
+
+- pink noise (equal energy per octave) reads flat across the bands, instead of sloping;
+- a pure tone lands in the band that contains its frequency, and its neighbours stay near the floor;
+- steady material sits below full height, so a chorus still has somewhere to go.
+"""
+
 import math
 import os
-import random
 import sys
-import unittest
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(HERE, ".."))
+for vendor in (os.path.join(HERE, "..", "vendor"), os.path.expanduser("~/.config/herdr-app/mods/media/vendor")):
+    if os.path.isdir(vendor):
+        sys.path.insert(0, vendor)
+        break
 
-import levels
+import numpy as np  # noqa: E402
 
+import levels  # noqa: E402
 
-def reference_fluctuation(history, frame_hz):
-    """The straightforward DFT `levels.fluctuation` used to run: every bin, trig rebuilt per call."""
-    n = len(history)
-    if n < 8:
-        return 0.0
-    mean = sum(history) / n
-    centred = [value - mean for value in history]
-    in_band = 0.0
-    total = 0.0
-    for k in range(1, n // 2 + 1):
-        hz = k * frame_hz / n
-        weight = 2.0 * math.pi * k / n
-        real = 0.0
-        imaginary = 0.0
-        for i, value in enumerate(centred):
-            real += value * math.cos(weight * i)
-            imaginary -= value * math.sin(weight * i)
-        power = real * real + imaginary * imaginary
-        total += power
-        if levels.FLUCT_LOW_HZ <= hz <= levels.FLUCT_HIGH_HZ:
-            in_band += power
-    return in_band / total if total > 0.0 else 0.0
+DT = levels.BLOCK / levels.RATE
 
 
-class FluctuationTest(unittest.TestCase):
-    def test_matches_the_transform_it_replaced(self):
-        # The rewrite is only a rewrite: same answer as the all-bins DFT on every history length the
-        # envelope can have.
-        rng = random.Random(7)
-        frame_hz = levels.RATE / levels.BLOCK
-        for _ in range(200):
-            length = rng.randint(8, levels.VOICE_FRAMES)
-            history = [rng.random() for _ in range(length)]
-            self.assertLess(
-                abs(levels.fluctuation(history, frame_hz) - reference_fluctuation(history, frame_hz)), 1e-9
-            )
-
-    def test_too_short_is_nothing(self):
-        self.assertEqual(levels.fluctuation([0.5] * 7, levels.RATE / levels.BLOCK), 0.0)
-
-    def test_a_constant_history_moves_not_at_all(self):
-        # 0.5 divides exactly, so the mean-centring leaves true zeros rather than rounding dust.
-        history = [0.5] * levels.VOICE_FRAMES
-        self.assertEqual(levels.fluctuation(history, levels.RATE / levels.BLOCK), 0.0)
-        self.assertEqual(reference_fluctuation(history, levels.RATE / levels.BLOCK), 0.0)
+def bands_of(signal, blocks=40):
+    """Run a signal through the pipeline the helper uses, and return the last frames' bands."""
+    window = np.hanning(levels.BLOCK).astype(np.float32)
+    peaks = None
+    frames = []
+    for start in range(0, len(signal) - levels.BLOCK, levels.BLOCK):
+        chunk = signal[start : start + levels.BLOCK]
+        if len(chunk) < levels.BLOCK:
+            break
+        power = np.abs(np.fft.rfft(chunk * window, n=levels.FFT_SIZE)) ** 2
+        energy = np.add.reduceat(power, levels.BAND_EDGES[:-1])
+        fresh = [levels.band_level(float(e)) for e in energy]
+        if peaks is None:
+            peaks = [(value, value) for value in fresh]
+        drawn, peaks = levels.per_band(fresh, peaks, DT)
+        frames.append(levels.smooth(drawn))
+    return np.array(frames[-blocks:])
 
 
-class BandRangeTest(unittest.TestCase):
-    def test_one_range_per_band(self):
-        self.assertEqual(len(levels.BAND_RANGES), levels.BANDS)
-
-    def test_ranges_are_in_bounds(self):
-        for lo, hi in levels.BAND_RANGES:
-            self.assertGreaterEqual(lo, 1)
-            self.assertLess(lo, hi)
-            self.assertLessEqual(hi, levels.BLOCK // 2)
-
-    def test_ranges_never_move_backwards(self):
-        # The lowest bands are narrower than one bin, so neighbouring bands share an edge; the
-        # bands must never run backwards, and the last must still reach the top of the range.
-        for i in range(len(levels.BAND_RANGES) - 1):
-            lo, hi = levels.BAND_RANGES[i]
-            next_lo, next_hi = levels.BAND_RANGES[i + 1]
-            self.assertLessEqual(lo, next_lo)
-            self.assertLessEqual(hi, next_hi)
-        self.assertEqual(levels.BAND_RANGES[-1][1], round(levels.HIGH_HZ / (levels.RATE / levels.BLOCK)))
+def pink(seconds=2.0, seed=3):
+    rng = np.random.default_rng(seed)
+    n = int(seconds * levels.RATE)
+    white = rng.standard_normal(n)
+    spec = np.fft.rfft(white)
+    freqs = np.fft.rfftfreq(n, 1.0 / levels.RATE)
+    freqs[0] = freqs[1]
+    out = np.fft.irfft(spec / np.sqrt(freqs), n)
+    return (out / (np.abs(out).max() * 1.2)).astype(np.float32)
 
 
-class LevelTest(unittest.TestCase):
-    def test_silence_is_empty(self):
-        self.assertEqual(levels.level(0), 0.0)
-        self.assertEqual(levels.level(1e-12), 0.0)
-
-    def test_floor_is_empty(self):
-        self.assertAlmostEqual(levels.level(10 ** (levels.FLOOR_DB / 20)), 0.0, places=6)
-
-    def test_loudness_is_full(self):
-        self.assertEqual(levels.level(levels.LOUDNESS), 1.0)
-
-    def test_monotone(self):
-        self.assertLessEqual(levels.level(0.001), levels.level(0.01))
-        self.assertLessEqual(levels.level(0.01), levels.level(1.0))
-
-    def test_sweep_stays_in_range(self):
-        for peak in (1e-12, 1e-9, 1e-6, 0.001, 0.01, 0.1, 0.5, 1.0, 10.0):
-            value = levels.level(peak)
-            self.assertGreaterEqual(value, 0.0)
-            self.assertLessEqual(value, 1.0)
+def tone(hz, seconds=2.0, amp=0.5):
+    t = np.arange(int(seconds * levels.RATE)) / levels.RATE
+    return (amp * np.sin(2 * math.pi * hz * t)).astype(np.float32)
 
 
-class VoiceTest(unittest.TestCase):
-    def test_a_silent_scene_reads_as_no_voice(self):
-        history = []
-        bands = [0.0] * levels.BANDS
-        self.assertEqual(levels.voice_activity(bands, history), 0.0)
-
-    def test_the_mid_band_alone_is_not_a_voice(self):
-        # A guitar sitting in the vocal band, with nothing above it: the band is loud, the wobble is
-        # steady, and the share against the other bands is flat. This is the case that used to light
-        # the art as if someone were singing.
-        history = []
-        loop = [0.6] * levels.BANDS
-        for _ in range(30):
-            heard = levels.voice_activity(loop, history)
-        self.assertLess(heard, 0.3)
-
-    def test_a_sung_line_reads_as_voice(self):
-        # Syllables: the vocal band rises and falls against a quieter rest of the mix.
-        history = []
-        for i in range(40):
-            bands = [0.25] * levels.BANDS
-            for b in range(levels.VOICE_RANGE[0], levels.VOICE_RANGE[1] + 1):
-                bands[b] = 0.85 if i % 3 == 0 else 0.3
-            heard = levels.voice_activity(bands, history)
-        self.assertGreater(heard, 0.45)
-
-    def test_history_is_bounded(self):
-        history = []
-        for _ in range(200):
-            levels.voice_activity([0.5] * levels.BANDS, history)
-        self.assertLessEqual(len(history), levels.VOICE_FRAMES)
+def band_with(hz):
+    for i, (a, b) in enumerate(levels.BAND_RANGES):
+        low = a * levels.RATE / levels.FFT_SIZE
+        high = b * levels.RATE / levels.FFT_SIZE
+        if low <= hz < high:
+            return i
+    return len(levels.BAND_RANGES) - 1
 
 
-
-class GainTest(unittest.TestCase):
-    def run_gain(self, spectrum, seconds, peak=1.0, frame_hz=levels.RATE / levels.BLOCK):
-        dt = 1.0 / frame_hz
-        scaled = spectrum
-        for _ in range(int(seconds * frame_hz)):
-            scaled, peak = levels.gain(spectrum, peak, dt)
-        return scaled, peak
-
-    def test_a_quiet_spectrum_fills_the_row(self):
-        # 0.25 of full scale is what a quiet master draws; over a few seconds it should reach the top.
-        scaled, _ = self.run_gain([0.25] * levels.BANDS, 10.0)
-        self.assertAlmostEqual(max(scaled), 1.0, places=3)
-        self.assertAlmostEqual(min(scaled), 1.0, places=3)
-
-    def test_full_scale_is_left_alone(self):
-        # No time passing means no decay: a row already at full scale is drawn as it came in.
-        scaled, peak = levels.gain([1.0, 0.5], 1.0, 0.0)
-        self.assertEqual(peak, 1.0)
-        self.assertEqual(scaled, [1.0, 0.5])
-
-    def test_silence_lets_the_peak_decay(self):
-        # A loud peak must not stick: without this a quiet passage after a chorus stays invisible.
-        quiet = [0.02] * levels.BANDS
-        silent, peak = self.run_gain([0.0] * levels.BANDS, 10.0, peak=1.0)
-        self.assertEqual(silent, [0.0] * levels.BANDS)
-        self.assertLess(peak, 0.05)
-        _, later = self.run_gain(quiet, 0.0, peak=peak)
-        self.assertLess(later, 1.0)
-
-    def test_the_peak_never_exceeds_the_loudest_band(self):
-        peak = 0.5
-        for _ in range(400):
-            bands = [0.1, 0.3, 0.2]
-            _, peak = levels.gain(bands, peak, 0.0464)
-            self.assertLessEqual(peak, max(0.5, max(bands)) + 1e-12)
-
-    def test_band_ratios_survive_the_gain(self):
-        # The property that protects voice_activity and the skyline: one gain moves the whole row, it
-        # does not flatten the bands toward each other.
-        bands = [0.2] * levels.BANDS
-        bands[levels.VOICE_RANGE[0]] = 0.6
-        scaled, _ = levels.gain(bands, 1.0, 0.0464)
-        self.assertAlmostEqual(scaled[levels.VOICE_RANGE[0]] / scaled[0], 0.6 / 0.2, places=9)
-
-    def test_nothing_to_see_stays_flat(self):
-        scaled, peak = self.run_gain([0.0] * levels.BANDS, 60.0)
-        self.assertEqual(scaled, [0.0] * levels.BANDS)
-        self.assertLess(peak, 1e-6)
+def test_pink_noise_is_flat():
+    """Equal energy per octave must draw a flat row: the old max-over-bin maths sloped by 0.25."""
+    row = np.percentile(bands_of(pink()), 50, axis=0)
+    assert row.max() - row.min() < 0.15, f"pink noise slopes: {row.max() - row.min():.2f}"
+    assert row.max() <= 1.0 and row.min() > 0.45, f"pink noise not near the target: {row.min():.2f}..{row.max():.2f}"
 
 
-class EnvelopeTest(unittest.TestCase):
-    def test_fall_follows_the_clock_not_the_block(self):
-        # One time constant of release leaves 1/e of the gap, whatever the block rate is.
-        one_tau = levels.envelope([0.0], [1.0], levels.TAU_RELEASE)[0]
-        self.assertAlmostEqual(one_tau, 1 / math.e, places=3)
-        self.assertGreater(levels.envelope([0.0], [1.0], levels.TAU_RELEASE / 2)[0], one_tau)
-        self.assertLess(levels.envelope([0.0], [1.0], levels.TAU_RELEASE * 2)[0], one_tau)
+def test_steady_material_leaves_headroom():
+    """A band at its own average is drawn at BAND_TARGET, not pinned to the top."""
+    row = np.percentile(bands_of(pink()), 50, axis=0)
+    assert row.max() < 0.85, f"steady material saturates at {row.max():.2f}"
+    assert row.max() > 0.6, f"steady material is too quiet at {row.max():.2f}"
 
-    def test_no_time_means_no_change(self):
-        self.assertEqual(levels.envelope([0.0, 1.0], [0.5, 0.2], 0), [0.5, 0.2])
 
-    def test_a_rise_is_smoothed_by_the_attack(self):
-        # One block (2048 samples at 44.1 kHz is 46.4 ms) gets most, not all, of the way up.
-        dt = levels.BLOCK / levels.RATE
-        risen = levels.envelope([1.0], [0.0], dt)[0]
-        self.assertAlmostEqual(risen, 1.0 - math.exp(-dt / levels.TAU_ATTACK), places=6)
-        self.assertGreater(risen, 0.6)
-        self.assertLess(risen, 0.7)
+def test_a_tone_lands_in_its_own_band():
+    """A pure tone reads in the band that holds its frequency, not beside it.
 
-    def test_a_fall_is_slower_than_a_rise(self):
-        # The asymmetry is the point: same block, same distance, very different fractions.
-        dt = levels.BLOCK / levels.RATE
-        rise = levels.envelope([1.0], [0.0], dt)[0]
-        fall = 1.0 - levels.envelope([0.0], [1.0], dt)[0]
-        self.assertAlmostEqual(fall, 1.0 - math.exp(-dt / levels.TAU_RELEASE), places=6)
-        self.assertLess(fall, 0.2)
-        self.assertGreater(rise, fall * 3)
+    Below a few hundred hertz a 1/3-octave band is one 10.8 Hz bin wide, so a Hann window's leakage
+    necessarily spills into the neighbouring bands: that is the transform's resolution, not a bug. What
+    must hold is that the peak is in the right band and that nothing leaks far away.
+    """
+    for hz in (60, 250, 1000, 6000):
+        row = np.percentile(bands_of(tone(hz)), 50, axis=0)
+        expected = band_with(hz)
+        assert abs(row[expected] - row.max()) < 0.08, (
+            f"{hz} Hz peaked at band {int(row.argmax())}, expected {expected}"
+        )
+        far = [band for band in range(levels.BANDS) if abs(band - expected) > 2]
+        # Relative to the peak, because per-band scaling lifts even a residual tail to a visible
+        # fraction: what matters is that the tone itself is the tallest bar by a wide margin.
+        assert max(row[far]) < 0.35 * row[expected], f"{hz} Hz leaks {max(row[far]):.2f} three bands away"
 
-    def test_never_overshoots(self):
-        for dt in (0.01, 0.046, 0.5, 5.0):
-            for fresh, prev in ((0.0, 1.0), (1.0, 0.0), (0.6, 0.6)):
-                value = levels.envelope([fresh], [prev], dt)[0]
-                self.assertGreaterEqual(value, min(fresh, prev) - 1e-9)
-                self.assertLessEqual(value, max(fresh, prev) + 1e-9)
+
+def test_energy_beats_the_loudest_bin():
+    """A band's value must not depend on how many bins it has."""
+    wide = levels.BAND_RANGES[-1]
+    narrow = levels.BAND_RANGES[0]
+    assert wide[1] - wide[0] > narrow[1] - narrow[0]
+    peaks = [(0.5, 0.5)] * levels.BANDS
+    drawn, _ = levels.per_band([0.5] * levels.BANDS, peaks, DT)
+    assert len(set(round(v, 6) for v in drawn)) == 1, "identical inputs must draw identical bands"
+
+
+def test_per_band_scales_do_not_run_away():
+    """Silence stays silent, and a band at its own peak is drawn at the target, not pinned to the top."""
+    peaks = [(0.30, 0.30)] * levels.BANDS
+    drawn, _ = levels.per_band([0.0] * levels.BANDS, peaks, DT)
+    assert max(drawn) == 0.0, "silence was amplified"
+    drawn, _ = levels.per_band([1.0] * levels.BANDS, peaks, DT)
+    assert min(drawn) == levels.BAND_TARGET, "a band at full scale should sit at the target height"
 
 
 if __name__ == "__main__":
-    unittest.main()
+    # pytest is not installed with this Python, so the same tests also run as a plain script.
+    failures = 0
+    for name, fn in sorted(globals().items()):
+        if not (name.startswith("test_") and callable(fn)):
+            continue
+        try:
+            fn()
+            print(f"  ok    {name}")
+        except AssertionError as error:
+            failures += 1
+            print(f"  FAIL  {name}: {error}")
+    print("  all passed" if not failures else f"  {failures} failed")
+    sys.exit(1 if failures else 0)

@@ -10,26 +10,70 @@ import math
 BANDS = 28
 RATE = 44100
 BLOCK = 2048
+# The transform is zero-padded to this: a 2048-sample window at 44.1 kHz has 21.5 Hz bins, so the
+# lowest bands (40-170 Hz) are one bin wide each and the log edges land wherever rounding puts them.
+# Twice the length halves the bin and costs one longer FFT per block, which is microseconds.
+FFT_SIZE = 4096
 LOW_HZ = 40.0
 HIGH_HZ = 16000.0
-FLOOR_DB = -55.0  # a band quieter than this reads as empty
+FLOOR_DB = -62.0  # a band quieter than this reads as empty
 TAU_ATTACK = 0.045  # s, the bar rise
 TAU_RELEASE = 0.25  # s, the bar fall; both time-based, because the block rate varies by device
 TAU_GAIN = 3.0  # s, how fast the full scale forgets a peak
-LOUDNESS = BLOCK * 0.25  # FFT peak that counts as full scale
+LOUDNESS = BLOCK * 0.25  # a full-scale sine's peak bin through a Hann window (sum(w) / 2)
+WINDOW_GAIN = 0.5
+# No band may be narrower than the transform can resolve. A Hann window's main lobe is four bins wide,
+# so at 44.1 kHz a band thinner than ~43 Hz is not a measurement: a 60 Hz tone's lobe spanned six
+# 10-25 Hz bands, and per-band scaling drew every one of them at full height. Merging the bottom bands
+# up to this width keeps a tone in the one band it belongs to, at the price of coarser sub-bass bars —
+# which is honest, because the resolution is not there to be had at this block length.
+MIN_BAND_BINS = 4
+# A band's own scale, so the spectral tilt of a mix stops being the picture. Two references: one that
+# follows a passage (the dynamics the eye reads) and one that remembers the song (the absolute scale),
+# because a quiet intro must not be drawn at full height just because the chorus was loud.
+TAU_LOCAL = 4.0  # s, the passage's peak per band
+TAU_SONG = 90.0  # s, the song's peak per band
+LOCAL_SHARE = 0.6  # how much the passage decides a band's scale, and how much the song
+BAND_FLOOR = 0.50  # a band that never rises above this is not amplified further than 1/BAND_FLOOR
+# Where a band's own reference peak is drawn. Not full height: a band sitting at its average would
+# otherwise be pinned to the top with nowhere to show a chorus, and steady material (noise, a held
+# pad, a drone) would fill the row edge to edge instead of reading as the flat line it is.
+BAND_TARGET = 0.72
 
 
 def band_ranges():
-    """Log-spaced FFT bin ranges, one (low, high) per band."""
+    """Log-spaced FFT bin ranges, one (low, high) per band, over the zero-padded transform.
+
+    Log spacing, then a floor on the width: a band below MIN_BAND_BINS would be narrower than the
+    window's main lobe, so the edges are pushed out until every band can resolve what it claims.
+    """
+    bin_hz = RATE / FFT_SIZE
     step = math.log(HIGH_HZ / LOW_HZ) / BANDS
-    edges = [
-        min(max(1, round(LOW_HZ * math.exp(step * i) / (RATE / BLOCK))), BLOCK // 2)
-        for i in range(BANDS + 1)
-    ]
-    return [(a, max(a + 1, b)) for a, b in zip(edges, edges[1:])]
+    edges = [min(max(1, round(LOW_HZ * math.exp(step * i) / bin_hz)), FFT_SIZE // 2) for i in range(BANDS + 1)]
+    for i in range(1, len(edges)):
+        edges[i] = max(edges[i], edges[i - 1] + MIN_BAND_BINS)
+    # The width floor pushes the top out; clamp it back inside the spectrum and thin the last bands
+    # rather than reporting a band that is not there.
+    edges = [min(edge, FFT_SIZE // 2) for edge in edges]
+    ranges = [(a, max(a + 1, b)) for a, b in zip(edges, edges[1:])]
+    return ranges
 
 
 BAND_RANGES = band_ranges()
+# The edges as one flat list, so the spectrum is reduced band by band in a single call
+# (numpy.add.reduceat) instead of a Python loop over 28 slices per block.
+BAND_EDGES = [band[0] for band in BAND_RANGES] + [BAND_RANGES[-1][1]]
+
+
+def band_centres():
+    """The geometric centre of each band, Hz."""
+    return [math.sqrt(BAND_RANGES[i][0] * BAND_RANGES[i][1]) * RATE / FFT_SIZE for i in range(BANDS)]
+
+
+# No weighting curve. A-weighting belongs to loudness meters, not to a spectrum: it would tilt a
+# display that is meant to show what the mix contains, and it made pink noise — which is flat by
+# nature, an equal share of energy per octave — read as a slope. The bands are normalised one by one
+# further down, which is what gives the quiet end of the spectrum its height back.
 
 # Voice is not a band. 250-2000 Hz holds guitars, synths and snares as readily as a singer, so the band
 # alone lights up for a solo. Two cues the singing-voice-detection literature leans on separate more of
@@ -162,6 +206,53 @@ def level(peak):
     """An FFT peak as 0..1 between FLOOR_DB and full scale."""
     db = 20.0 * math.log10(peak) if peak > 1e-9 else -120.0
     return max(0.0, min(1.0, (db - FLOOR_DB) / -FLOOR_DB))
+
+
+def band_level(energy):
+    """A band's summed energy as 0..1.
+
+    Energy rather than the band's loudest bin: a maximum over a band is one bin's noise and depends on
+    how wide the band is, which is why the same mix drew taller bars at the top of the spectrum. A sum
+    over the band is what the band contains, and it does not flicker between frames.
+    """
+    scaled = energy / (LOUDNESS * LOUDNESS)
+    db = 10.0 * math.log10(scaled) if scaled > 1e-12 else -120.0
+    return max(0.0, min(1.0, (db - FLOOR_DB) / -FLOOR_DB))
+
+
+def per_band(levels, peaks, dt):
+    """Scale each band by its own recent peak, so every band uses the row's whole height.
+
+    `peaks` is one (local, song) pair per band, carried between blocks. Atomic scales would flatten a
+    mix into 28 equal bars, so the scale is a blend of the passage's peak and the song's, and a band
+    that never rises above BAND_FLOOR is left alone rather than amplifying its own noise into a bar.
+    The reference peak is drawn at BAND_TARGET rather than at the top, which is what keeps the rest of
+    the height for what rises above it: steady material reads as a flat line at 0.72, not as a wall.
+    Returns the drawn levels and the peaks to pass back in next block.
+    """
+    local_decay = math.exp(-dt / TAU_LOCAL)
+    song_decay = math.exp(-dt / TAU_SONG)
+    drawn = []
+    out = []
+    for value, (local, song) in zip(levels, peaks):
+        local = max(value, local * local_decay)
+        song = max(value, song * song_decay)
+        out.append((local, song))
+        scale = LOCAL_SHARE * local + (1.0 - LOCAL_SHARE) * song
+        drawn.append(min(1.0, BAND_TARGET * value / max(scale, BAND_FLOOR)))
+    return drawn, out
+
+
+def smooth(bands, share=0.25):
+    """Blend each band with its neighbours (1-2-1), so one bin's spike cannot flicker a bar alone."""
+    n = len(bands)
+    if n < 3:
+        return list(bands)
+    out = [bands[0]]
+    for i in range(1, n - 1):
+        out.append((bands[i - 1] + 2.0 * bands[i] + bands[i + 1]) / 4.0)
+    out.append(bands[-1])
+    return [value + (blended - value) * share for value, blended in zip(bands, out)]
 
 
 def envelope(fresh, prev, dt):
