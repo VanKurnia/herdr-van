@@ -59,7 +59,7 @@ class StoreTest(unittest.TestCase):
 
     def test_publish_levels_throttles(self):
         self.writer.publish_levels([0.1] * levels.BANDS)
-        time.sleep(0.02)
+        time.sleep(store.LEVELS_EVERY_S / 2)
         self.writer.publish_levels([0.2] * levels.BANDS)
         self.assertEqual(json.loads(self.read("levels.json"))["l"], [0.1] * levels.BANDS)
         time.sleep(store.LEVELS_EVERY_S + 0.05)
@@ -71,7 +71,7 @@ class StoreTest(unittest.TestCase):
         path = os.path.join(self.dir, "levels.json")
         before = os.stat(path).st_mtime_ns
         for v in (0.2, 0.3, 0.4, 0.5):
-            time.sleep(0.005)
+            time.sleep(store.LEVELS_EVERY_S / 8)  # inside one window, whatever the window is
             self.writer.publish_levels([v] * levels.BANDS)
         self.assertEqual(os.stat(path).st_mtime_ns, before)
         time.sleep(store.LEVELS_EVERY_S + 0.05)

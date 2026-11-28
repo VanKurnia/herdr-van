@@ -7,7 +7,7 @@ import time
 
 BEAT_STALE_S = 90.0  # the mod beats every 10 s
 PROTOCOL_V = 1  # state.json's shape; bump when a field is renamed or removed
-LEVELS_EVERY_S = 0.08  # the spectrum, published at the rate the row reads it
+LEVELS_EVERY_S = 0.018  # the publish floor, deliberately below the analysis hop (23.2 ms): a floor above the hop drops every second reading and halves the cadence
 COMMANDS = {"prev", "toggle", "next"}
 REPLACE_TRIES = 5  # a rename can lose to a reader on Windows; 4 waits of 20 ms ride it out
 COVER_SETTLE_S = 6.0  # how long after a track change the artwork may still be on its way
@@ -159,6 +159,27 @@ class Writer:
         self.seen_command = stamp
         return action
 
+    def _stream(self, name, body):
+        """Write a fast stream file in place, retried, with the atomic path as the fallback.
+
+        The temp-and-rename path is what makes `state.json`, `tick` and `beat` safe to lose a race
+        with, but it costs a file creation and a rename for every write, and this file is written
+        forty times a second: measured on this machine, 9.0 % of a core against 4.3 % in place. The
+        trade is safe for this one file — the mod treats a body it cannot parse as "keep the last good
+        reading" — and a body cut short is never valid JSON, because the shape always ends in `}`.
+        """
+        path = os.path.join(self.dir, name)
+        for attempt in range(REPLACE_TRIES):
+            try:
+                with open(path, "w", encoding="utf-8") as fh:
+                    fh.write(body)
+                return
+            except PermissionError:  # the mod has the file open: retry, as the rename path does
+                if attempt == REPLACE_TRIES - 1:
+                    self._atomic(name, body)
+                    return
+                time.sleep(0.005)
+
     def _atomic(self, name, body):
         """Write text through a temp file, so the mod never reads a partial body.
 
@@ -210,7 +231,7 @@ class Writer:
         if self.levels is not None and now - self.levels_at < LEVELS_EVERY_S:
             return
         self.levels, self.levels_at = body, now
-        self._atomic("levels.json", body)
+        self._stream("levels.json", body)
 
     def note_track(self, key, settle_s=COVER_SETTLE_S):
         """Adopt the track the player reports, and open its window for late art.

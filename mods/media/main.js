@@ -31,7 +31,7 @@ const STALE_RETRIES = 2; // relaunches before a helper that is up but wedged is 
 const OFFLINE_AFTER = 2; // failed launches before the row says why it is empty
 const PROTOCOL_V = 1; // the state.json shape this mod reads; mirrors store.py's PROTOCOL_V
 const AUDIO_WHY = "audio: "; // marks a reason the audio thread published, so a launcher's is never mistaken for one
-// The helper writes levels.json at most every 80 ms: a watch event is the read trigger, so a tick
+// The helper writes levels.json at most every 25 ms: a watch event is the read trigger, so a tick
 // that has nothing new reads nothing. state.json and the cover are the payloads the row re-reads;
 // levels.json is the stream; tick, beat, cmd and helper.lock are pulses nothing here acts on.
 const STATE_FILES = /^(state\.json|cover-[0-9a-f-]+\.png)$/;

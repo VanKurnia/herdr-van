@@ -139,12 +139,31 @@ ever empty. The mapping is linear now, and a column with nothing in it is a gap.
 fixes the resolution — 268 px fits eight rows of dots, so the picture is quantised to eight steps,
 which is a property of the row rather than of the maths.
 
-Measured on one 8 s capture through both pipelines (`bench/visualizer/analyze.py`): pink noise, which
-must draw flat, sloped 0.27 and now 0.24 at this floor; music keeps its shape (contrast 0.42) where
-per-band scaling had flattened it to 0.11. One tone still lands in the band that holds its frequency,
-and a 60 Hz tone leaks 0.09 three bands away instead of 0.72. The analysis costs 32.6 ms of CPU per
-7.94 s of audio (0.41 % of a core, against 0.37 % for the old maths): the helper's 13-16 % is nearly
-all capture, not arithmetic.
+**Latency: what a bar's height is actually made of.** Four stages, each one measured on this machine
+rather than assumed, and each one able to hide the others' cost:
+
+| stage | before | now |
+|---|---|---|
+| capture: how long a read blocks | 48.8 ms (`blocksize=2048`) | **10.8 ms** (`512`, into a rolling 2048 window) |
+| analysis: how old a reading is | 46.4 ms | **23.2 ms** (`HOP = 1024`, 43 Hz) |
+| publish: how long a reading waits for a write | 94 ms median (80 ms floor) | **29 ms median** (18 ms floor, 41 Hz) |
+| write to the mod noticing it | 1.2 ms median, 5 ms max | unchanged |
+| paint | ≤ 16.7 ms | unchanged |
+
+End to end that is **~38 ms typical and ~79 ms worst**, from ~80 ms and ~165 ms. The window is still
+2048 samples and the bands are still the same bands: what changed is that the wait for audio, the age
+of a reading and the resolution of a reading stopped being the same number.
+
+Two things this cost, both measured and both worth knowing. The publish floor must sit **below** the
+hop: at 25 ms against a 23.2 ms hop it dropped every second reading and the stream ran at 27 Hz, and
+dropping it to 18 ms put it at 41 Hz. And a 40 Hz stream is expensive to *write*: `_stream()` writes
+`levels.json` in place instead of through a temp file and a rename, because the atomic path measured
+9.0 % of a core at this rate against 4.3 % in place. The helper runs at **18-23 %** of a core, against
+14 % at 11 Hz — the price of a stream that arrives four times as often. A torn read is safe here and
+only here: the mod treats a body it cannot parse as "keep the last good reading".
+
+The floor of this design is not code: the shared-mode WASAPI engine period (~10 ms, which a 512-sample
+read mostly waits for) and one paint frame (~16.7 ms). Below ~25 ms would take exclusive-mode capture.
 
 Each file has one writer, because Herdr's `writeTextFile` is a read-modify-write
 that needs the content it expects to find. The mod's `beat` is a heartbeat: when

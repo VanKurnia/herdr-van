@@ -9,7 +9,14 @@ import math
 # Spectrum: log-spaced bands from 40 Hz to 16 kHz.
 BANDS = 28
 RATE = 44100
-BLOCK = 2048
+BLOCK = 2048  # the analysis window: 46.4 ms at 44.1 kHz, which is what sets the frequency resolution
+CHUNK = 512  # samples read from the device at a time: 11.6 ms, the capture's own latency
+HOP = 1024  # samples between analyses: a reading is at most one hop (23 ms) old, at 43 Hz
+# The three are separate on purpose. The window must stay 2048 for the low bands to resolve; the hop is
+# what a bar's freshness costs; the chunk is what the device makes us wait for. Reading 512 at a time
+# and transforming the newest 2048 means a reading is one chunk old, not one window — measured, the
+# capture call blocks 10.8 ms at 512 instead of 48.8 ms at 2048 (a 512 read mostly finds data the
+# shared-mode engine already buffered, whose period is ~10 ms and is therefore the floor here).
 # The transform is zero-padded to this: a 2048-sample window at 44.1 kHz has 21.5 Hz bins, so the
 # lowest bands (40-170 Hz) are one bin wide each and the log edges land wherever rounding puts them.
 # Twice the length halves the bin and costs one longer FFT per block, which is microseconds.
@@ -80,7 +87,10 @@ def band_centres():
 # its envelope carries, which a held pad does not and a drum kit does only in transients.
 VOICE_LOW_HZ = 250.0
 VOICE_HIGH_HZ = 2000.0
-VOICE_FRAMES = 24  # envelope history, about a second at the block rate
+VOICE_FRAMES = 24  # envelope history, about a second at the old block rate
+# The history is a duration, not a count: at any frame rate it must span the same second, or the
+# syllabic cue measures a shorter window at a faster cadence and its fluctogram bands move.
+VOICE_HISTORY_S = VOICE_FRAMES * BLOCK / RATE
 FLUCT_LOW_HZ = 2.0  # the syllable fluctuation band: singing moves its envelope at a few hertz
 FLUCT_HIGH_HZ = 8.0
 
@@ -100,6 +110,11 @@ VOICE_BINS = (BAND_RANGES[VOICE_RANGE[0]][0], BAND_RANGES[VOICE_RANGE[1]][1])
 # The band's cosines and sines, built once per (history length, frame rate) rather than per call: the key
 # space is one entry per length the envelope can have (VOICE_FRAMES) at the caller's one frame rate.
 _FLUCT_TABLES = {}
+
+
+def _keep_frames(frame_hz):
+    """How many history frames span VOICE_HISTORY_S at this frame rate."""
+    return max(8, int(round(VOICE_HISTORY_S * frame_hz)))
 
 
 def _band_tables(n, frame_hz):
@@ -169,7 +184,7 @@ def voice_activity(levels, history, flatness=None, frame_hz=RATE / BLOCK):
     if not any(levels):
         # Silence is not a quiet voice: no cues, no score.
         history.append(0.0)
-        del history[:-VOICE_FRAMES]
+        del history[:-_keep_frames(frame_hz)]
         return 0.0
     # Against the bands a voice is not in, not against the whole mix: a bass-heavy track drags a
     # whole-mix average up and the share then never fires for a mix that is genuinely sung.
@@ -178,7 +193,7 @@ def voice_activity(levels, history, flatness=None, frame_hz=RATE / BLOCK):
     ratio = vocal / max(other, 1e-6)
     share = max(0.0, min(1.0, (ratio - 0.98) / 0.30))
     history.append(vocal)
-    del history[:-VOICE_FRAMES]
+    del history[:-_keep_frames(frame_hz)]
     wobble = fluctuation(history, frame_hz)
     syllables = max(0.0, min(1.0, (wobble - 0.30) / 0.40))
     # Low flatness is a pitched sound: the voice, or at least not a cymbal. Without a spectrum, assume

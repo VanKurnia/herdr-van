@@ -35,7 +35,9 @@ from levels import (  # noqa: E402
     BAND_EDGES,
     BANDS,
     BLOCK,
+    CHUNK,
     FFT_SIZE,
+    HOP,
     RATE,
     VOICE_BINS,
     band_level,
@@ -136,13 +138,18 @@ def audio_loop(writer):
     drawn_peak = 1.0  # full scale, which is also what the first block draws with
     voice_hist = []  # the vocal band's recent levels, for the syllabic cue
     score_hist = []  # the recent voice scores, for the median outlier filter
+    history = np.zeros(BLOCK, dtype=np.float32)  # the newest BLOCK samples: the analysis window
+    since_analysis = 0  # samples in `history` the last analysis has not seen
     last = time.monotonic()
 
     while not writer.stopping():
         try:
             speaker = sc.default_speaker()
             mic = sc.get_microphone(id=str(speaker.name), include_loopback=True)
-            with mic.recorder(samplerate=RATE, channels=1, blocksize=BLOCK) as rec:
+            # A 512-sample read returns as soon as the shared-mode engine has that much (measured
+            # 10.8 ms), while the transform below still sees a full 2048-sample window: the wait for
+            # audio and the resolution of the reading stop being the same number.
+            with mic.recorder(samplerate=RATE, channels=1, blocksize=CHUNK) as rec:
                 resumed = False
                 while not writer.stopping():
                     # Nothing to publish while the track is paused or nobody is drawing the bars:
@@ -154,21 +161,34 @@ def audio_loop(writer):
                         resumed = True
                         time.sleep(0.05)  # still notices a resume within a frame
                         continue
-                    block = rec.record(numframes=BLOCK)
+                    chunk = rec.record(numframes=CHUNK)
                     now = time.monotonic()
-                    dt, last = now - last, now
                     if resumed:
-                        # A paused loopback buffer still holds pre-pause audio: drop it.
+                        # A paused loopback buffer still holds pre-pause audio: drop it, and start the
+                        # window again so the first analysis after a resume cannot be stale.
                         resumed = False
+                        history[:] = 0.0
+                        since_analysis = 0
+                        last = now
                         continue
-                    mono = block[:, 0] if block.ndim > 1 else block
-                    if len(mono) < BLOCK:
+                    mono = chunk[:, 0] if chunk.ndim > 1 else chunk
+                    if len(mono) < CHUNK:
                         continue  # a device can hand back a short first block
+                    # Slide the window one chunk and analyse every HOP of samples. The transform sees
+                    # the newest BLOCK samples, so nothing is analysed twice and nothing is missed; a
+                    # reading is at most one HOP old instead of a whole window.
+                    history[:-CHUNK] = history[CHUNK:]
+                    history[-CHUNK:] = mono
+                    since_analysis += len(mono)
+                    if since_analysis < HOP:
+                        continue
+                    since_analysis = 0
+                    dt, last = now - last, now
                     # Bands are summed energy over a zero-padded transform, not the loudest bin in
                     # each: the sum is what the band holds and does not flicker between frames, and
                     # the padding puts ten bins where the old geometry had one, so the low bands land
                     # on the frequencies they claim. One reduceat call covers all 28 bands.
-                    power = np.abs(np.fft.rfft(mono * window, n=FFT_SIZE)) ** 2
+                    power = np.abs(np.fft.rfft(history * window, n=FFT_SIZE)) ** 2
                     energy = np.add.reduceat(power, BAND_EDGES[:-1])
                     fresh = [band_level(float(e)) for e in energy]
                     # Spectral flatness over the voice's own bins: low for anything pitched, high for
@@ -176,7 +196,7 @@ def audio_loop(writer):
                     # one band against the rest and the per-band scale below would flatten that share.
                     voice_power = power[VOICE_BINS[0] : VOICE_BINS[1]] + 1e-12
                     flatness = float(np.exp(np.mean(np.log(voice_power))) / np.mean(voice_power))
-                    score = voice_activity(fresh, voice_hist, flatness, RATE / BLOCK)
+                    score = voice_activity(fresh, voice_hist, flatness, RATE / HOP)
                     # The outlier filter the literature uses: a median over a handful of frames, so a
                     # single loud consonant does not read as a change of section.
                     score_hist.append(score)
