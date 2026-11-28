@@ -35,6 +35,8 @@ def frames(signal, floor_db, band_floor):
     levels.FLOOR_DB = floor_db
     levels.BAND_FLOOR = band_floor
     peaks = None
+    prev = [0.0] * levels.BANDS
+    peak = 1.0
     out = []
     for start in range(0, len(signal) - levels.BLOCK, levels.BLOCK):
         chunk = signal[start : start + levels.BLOCK]

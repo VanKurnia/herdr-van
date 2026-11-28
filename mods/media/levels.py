@@ -16,10 +16,16 @@ BLOCK = 2048
 FFT_SIZE = 4096
 LOW_HZ = 40.0
 HIGH_HZ = 16000.0
-FLOOR_DB = -62.0  # a band quieter than this reads as empty
+FLOOR_DB = -55.0  # a band quieter than this reads as empty
 TAU_ATTACK = 0.045  # s, the bar rise
 TAU_RELEASE = 0.25  # s, the bar fall; both time-based, because the block rate varies by device
 TAU_GAIN = 3.0  # s, how fast the full scale forgets a peak
+HEADROOM = 1.12  # the loudest band is normalised to 1/HEADROOM, so a transient is not clipped flat
+# One gain for the whole spectrum, deliberately. Per-band scaling was built, measured and thrown out:
+# it turned a mix into a wall of equal bars (spectral contrast 0.41 -> 0.11, each band's movement over
+# time 0.10 -> 0.06) because a band scaled to its own peak can no longer be louder than itself. What
+# it was meant to fix — the analyser's own frequency tilt — the energy sum and the width floor already
+# fix. Flatness is a calibration property here, measured on pink noise; music is supposed to be shaped.
 LOUDNESS = BLOCK * 0.25  # a full-scale sine's peak bin through a Hann window (sum(w) / 2)
 WINDOW_GAIN = 0.5
 # No band may be narrower than the transform can resolve. A Hann window's main lobe is four bins wide,
@@ -31,14 +37,7 @@ MIN_BAND_BINS = 4
 # A band's own scale, so the spectral tilt of a mix stops being the picture. Two references: one that
 # follows a passage (the dynamics the eye reads) and one that remembers the song (the absolute scale),
 # because a quiet intro must not be drawn at full height just because the chorus was loud.
-TAU_LOCAL = 4.0  # s, the passage's peak per band
-TAU_SONG = 90.0  # s, the song's peak per band
-LOCAL_SHARE = 0.6  # how much the passage decides a band's scale, and how much the song
-BAND_FLOOR = 0.50  # a band that never rises above this is not amplified further than 1/BAND_FLOOR
-# Where a band's own reference peak is drawn. Not full height: a band sitting at its average would
-# otherwise be pinned to the top with nowhere to show a chorus, and steady material (noise, a held
-# pad, a drone) would fill the row edge to edge instead of reading as the flat line it is.
-BAND_TARGET = 0.72
+# (Removed: see the note on TAU_GAIN above. Kept here as the record of what was tried.)
 
 
 def band_ranges():
@@ -191,15 +190,15 @@ def voice_activity(levels, history, flatness=None, frame_hz=RATE / BLOCK):
 def gain(bands, peak, dt):
     """Scale the whole spectrum by one recent-peak normaliser, so a quiet master still fills the row.
 
-    One gain rather than one per band: the bands' relative heights are the picture, and the voice
-    score is a share of one band against the rest, so scaling all of them together leaves both intact.
-    The peak rises at once and forgets over TAU_GAIN. Returns the scaled levels and the peak to pass
-    back in next block.
+    One gain for the whole spectrum, because the bands' relative heights are the picture. The peak
+    rises at once and forgets over TAU_GAIN, and it is normalised with HEADROOM so the loudest band
+    sits just under the top: without that, every kick clipped the tallest bar flat against the roof and
+    the transient had nowhere to show. Returns the scaled levels and the peak to pass back in.
     """
     peak = max(max(bands, default=0.0), peak * math.exp(-dt / TAU_GAIN))
     if peak <= 1e-6:
         return list(bands), peak
-    return [min(1.0, v / peak) for v in bands], peak
+    return [min(1.0, v / (peak * HEADROOM)) for v in bands], peak
 
 
 def level(peak):
@@ -218,29 +217,6 @@ def band_level(energy):
     scaled = energy / (LOUDNESS * LOUDNESS)
     db = 10.0 * math.log10(scaled) if scaled > 1e-12 else -120.0
     return max(0.0, min(1.0, (db - FLOOR_DB) / -FLOOR_DB))
-
-
-def per_band(levels, peaks, dt):
-    """Scale each band by its own recent peak, so every band uses the row's whole height.
-
-    `peaks` is one (local, song) pair per band, carried between blocks. Atomic scales would flatten a
-    mix into 28 equal bars, so the scale is a blend of the passage's peak and the song's, and a band
-    that never rises above BAND_FLOOR is left alone rather than amplifying its own noise into a bar.
-    The reference peak is drawn at BAND_TARGET rather than at the top, which is what keeps the rest of
-    the height for what rises above it: steady material reads as a flat line at 0.72, not as a wall.
-    Returns the drawn levels and the peaks to pass back in next block.
-    """
-    local_decay = math.exp(-dt / TAU_LOCAL)
-    song_decay = math.exp(-dt / TAU_SONG)
-    drawn = []
-    out = []
-    for value, (local, song) in zip(levels, peaks):
-        local = max(value, local * local_decay)
-        song = max(value, song * song_decay)
-        out.append((local, song))
-        scale = LOCAL_SHARE * local + (1.0 - LOCAL_SHARE) * song
-        drawn.append(min(1.0, BAND_TARGET * value / max(scale, BAND_FLOOR)))
-    return drawn, out
 
 
 def smooth(bands, share=0.25):

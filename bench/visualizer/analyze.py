@@ -97,15 +97,17 @@ def old_drawn(audio, window):
 
 def new_drawn(audio, window):
     """The bands as the new pipeline draws them, returned pre-envelope so the raw shape is visible."""
-    peaks = [(0.0, 0.0)] * levels.BANDS
+    prev = [0.0] * levels.BANDS
+    peak = 1.0
     dt = levels.BLOCK / levels.RATE
     out = []
     for chunk in blocks(audio):
         power = np.abs(np.fft.rfft(chunk * window, n=levels.FFT_SIZE)) ** 2
         energy = np.add.reduceat(power, levels.BAND_EDGES[:-1])
         raw = [levels.band_level(float(e)) for e in energy]
-        drawn, peaks = levels.per_band(raw, peaks, dt)
-        out.append(levels.smooth(drawn))
+        prev = levels.envelope(levels.smooth(raw), prev, dt)
+        drawn, peak = levels.gain(prev, peak, dt)
+        out.append(drawn)
     return np.array(out)
 
 
@@ -155,7 +157,7 @@ def main():
 
     print(f"capture: {len(audio)/levels.RATE:.1f} s of loopback, {os.path.basename(CAPTURE)}")
     print(f"old: max over {OLD_RANGES[0][1]-OLD_RANGES[0][0]}..{max(b for a,b in OLD_RANGES)-min(a for a,b in OLD_RANGES)} bins, "
-          f"floor {levels.FLOOR_DB:.0f} dB | new: sum over {levels.FFT_SIZE//2} bins, weighted, per-band peaks")
+          f"floor {levels.FLOOR_DB:.0f} dB | new: summed energy, one gain")
 
     report("real music (raw, pre-envelope)", tail(old_drawn(audio, window)), centres)
     report("new pipeline (raw, pre-envelope)", tail(new_drawn(audio, window)), centres)

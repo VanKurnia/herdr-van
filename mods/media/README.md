@@ -123,19 +123,28 @@ window's main lobe is four bins wide, so a 1/3-octave band at 60 Hz is not a mea
 tone spanned six bands and the scaling below drew every one of them at full height. The bottom bands
 are now wider than pure log spacing would make them — coarser sub-bass bars, but honest ones.
 
-**Every band is scaled by its own peak** (`per_band()`): a blend of the passage's peak over 4 s and
-the song's over 90 s, with a floor so a band that never rises above `BAND_FLOOR` is not amplified
-from its own noise. Without it a mix's spectral tilt *is* the picture — the old maths drew a slope
-from 0.77 at 60 Hz to 0.28 at 14 kHz that no listener hears. The band sitting at its own reference
-peak is drawn at `BAND_TARGET` (0.72), not at the top, which is what leaves room for a chorus and
-keeps steady material (noise, a held pad) reading as the flat line it is rather than as a wall.
+**One gain for the whole spectrum, at `gain()`.** Per-band scaling was built, measured and thrown out:
+by giving each band a scale of its own it made the mix into a wall of equal bars — spectral contrast
+0.41 -> 0.11, and each band's movement over time 0.10 -> 0.06 — because a band normalised to its own
+peak can no longer be louder than itself. What per-band scaling was meant to fix, the energy sum and
+the width floor already fix. Flatness here is a *calibration* property, measured on pink noise; music
+is supposed to be shaped. The single gain keeps a quiet master filling the row and leaves the bands'
+ratios untouched (a test holds that), and it normalises with `HEADROOM` so the loudest band sits just
+under the top instead of clipping flat every time a kick lands.
 
-Measured on one 8 s capture through both pipelines (`bench/visualizer/analyze.py`): the median band
-spread across the spectrum went from 0.50 to 0.24 on real music, and pink noise — equal energy per
-octave, which a correct analyser must draw flat — from 0.27 to 0.10. The analysis costs 32.6 ms of
-CPU per 7.94 s of audio (0.41 % of a core, against 0.37 % for the old maths): the helper's 13-16 % is
-nearly all capture, not arithmetic. `bench/visualizer/sweep.py` is how `FLOOR_DB` and `BAND_FLOOR`
-were picked, scoring tone leakage, pink flatness and music spread together instead of by taste.
+**The renderer draws the level, not a curve of it.** `sky.js` raised every column with `level ** 0.7`
+and gave each column a floor of one dot, which is what made a correct spectrum still read as a row of
+equal bars: the gamma pulled quiet columns up toward the middle, and the floor made sure nothing was
+ever empty. The mapping is linear now, and a column with nothing in it is a gap. The row's height also
+fixes the resolution — 268 px fits eight rows of dots, so the picture is quantised to eight steps,
+which is a property of the row rather than of the maths.
+
+Measured on one 8 s capture through both pipelines (`bench/visualizer/analyze.py`): pink noise, which
+must draw flat, sloped 0.27 and now 0.24 at this floor; music keeps its shape (contrast 0.42) where
+per-band scaling had flattened it to 0.11. One tone still lands in the band that holds its frequency,
+and a 60 Hz tone leaks 0.09 three bands away instead of 0.72. The analysis costs 32.6 ms of CPU per
+7.94 s of audio (0.41 % of a core, against 0.37 % for the old maths): the helper's 13-16 % is nearly
+all capture, not arithmetic.
 
 Each file has one writer, because Herdr's `writeTextFile` is a read-modify-write
 that needs the content it expects to find. The mod's `beat` is a heartbeat: when

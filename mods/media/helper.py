@@ -40,7 +40,7 @@ from levels import (  # noqa: E402
     VOICE_BINS,
     band_level,
     envelope,
-    per_band,
+    gain,
     smooth,
     voice_activity,
 )
@@ -132,8 +132,8 @@ def audio_loop(writer):
         print("audio failed: %r" % (exc,), file=sys.stderr, flush=True)
         writer.publish_audio_error("%s: %s" % (type(exc).__name__, exc))
         return
-    levels = [0.0] * BANDS
-    peaks = None  # each band's (passage, song) peak, adopted from the first block
+    fresh_levels = [0.0] * BANDS
+    drawn_peak = 1.0  # full scale, which is also what the first block draws with
     voice_hist = []  # the vocal band's recent levels, for the syllabic cue
     score_hist = []  # the recent voice scores, for the median outlier filter
     last = time.monotonic()
@@ -149,8 +149,8 @@ def audio_loop(writer):
                     # the recorder stays open (a loopback nobody drains costs nothing), so a resume
                     # or a widened sidebar costs no device setup.
                     if not (writer.playing and writer.wanted()):
-                        levels = [0.0] * BANDS  # drop the fall, so a resume starts clean
-                        writer.publish_levels(levels)  # deduped: a silent body writes nothing
+                        fresh_levels = [0.0] * BANDS  # drop the fall, so a resume starts clean
+                        writer.publish_levels(fresh_levels)  # deduped: a silent body writes nothing
                         resumed = True
                         time.sleep(0.05)  # still notices a resume within a frame
                         continue
@@ -184,14 +184,13 @@ def audio_loop(writer):
                     voice = float(np.median(score_hist))
                     if writer.audio_note is not None:  # recovered, so the row stops saying why
                         writer.publish_audio_error(None)
-                    # Each band is scaled by its own recent peak, so a mix's spectral tilt stops being
-                    # the picture and every band can use the row's height. Enveloped after scaling, so
-                    # the rise and fall the eye sees is the same at any block rate.
-                    if peaks is None:
-                        peaks = [(value, value) for value in fresh]
-                    drawn, peaks = per_band(fresh, peaks, dt)
-                    levels = envelope(smooth(drawn), levels, dt)
-                    writer.publish_levels([round(v, 2) for v in levels], voice)
+                    # One gain for the whole spectrum, after the voice score has seen the raw levels:
+                    # the score is a share of one band against the rest, and a per-band scale would
+                    # flatten the very share it measures (and the picture, measured: contrast 0.41 to
+                    # 0.11, which is a wall of equal bars rather than a spectrum).
+                    fresh_levels = envelope(smooth(fresh), fresh_levels, dt)
+                    drawn, drawn_peak = gain(fresh_levels, drawn_peak, dt)
+                    writer.publish_levels([round(v, 2) for v in drawn], voice)
         except Exception as exc:  # no device yet, or the output device changed
             print("audio failed: %r" % (exc,), file=sys.stderr, flush=True)
             writer.publish_audio_error("%s: %s" % (type(exc).__name__, exc))

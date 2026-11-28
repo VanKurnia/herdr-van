@@ -19,7 +19,10 @@ const POOL = 14; // sparks in flight at once, two dots each
 const TAIL_MS = 55; // how far a spark's trail follows behind it
 const LAND_MS = 150; // how long the dot that lands lingers before it goes
 const CAP_SINK = 0.5; // px a peak cap falls per 80 ms
-const LIFT = 0.7; // the curve the level is raised by, so a column is as tall as it looks in the mix
+const LIFT = 1.0; // the curve the level is raised by: linear, so a column's height is its level
+// It was 0.7, a gamma that lifted quiet columns toward the middle of the band and pulled loud ones
+// down, so every bar looked much alike. Per-band scaling had already flattened this spectrum once
+// (contrast 0.41 -> 0.11) and the gamma finished the job, so it is gone.
 const SWELL = 0.22; // how much the beat swells the whole skyline
 const ZONES = 8; // shared paths: the tips are gathered into this many colour zones
 const BODY_ZONES = 24; // the columns' own colour steps: finer than the tips, so the ramp stays smooth
@@ -80,7 +83,9 @@ export class Sky {
       const a = levels[i] ?? 0;
       const b = levels[Math.min(n - 1, i + 1)] ?? a;
       const level = clamp01(a + (b - a) * (p - i)) ** LIFT * (1 + SWELL * this.pulse);
-      return Math.max(1, Math.round(clamp01(level) * rows));
+      // No floor of one dot: a column with nothing in it is a gap, and gaps are what make a skyline
+      // read as a spectrum instead of a row of equal bars.
+      return Math.round(clamp01(level) * rows);
     });
   }
 
