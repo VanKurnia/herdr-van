@@ -160,6 +160,9 @@
     2
   ],
   "terminal_opacity": 0,
+  "floating": [
+    { "id": "pywal", "content": { "mod": "herdr-media-pywal" }, "edge": "bottom", "align": "end" }
+  ],
   "divider": {
     "width": 1,
     "color": "border"

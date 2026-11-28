@@ -1,0 +1,18 @@
+{
+  "place": "none",
+  "title": "Follow the artwork",
+  "palette": [
+    {
+      "title": "Colours follow the artwork: on or off",
+      "command": "herdr-media-pywal.toggle",
+      "group": "Look",
+      "words": "pywal theme wallpaper colours cover artwork adaptive"
+    },
+    {
+      "title": "Colours follow the artwork: repaint now",
+      "command": "herdr-media-pywal.refresh",
+      "group": "Look",
+      "words": "pywal regenerate repaint theme wallpaper"
+    }
+  ]
+}
